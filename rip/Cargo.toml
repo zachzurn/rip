@@ -1,0 +1,15 @@
+[package]
+name = "rip"
+version = "0.1.0"
+edition = "2021"
+description = "Unified API for Rip receipt markup rendering"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zachzurn/rip"
+authors = ["Zach Zurn"]
+
+[dependencies]
+rip_parser = { path = "../rip_parser" }
+rip_image = { path = "../rip_image" }
+rip_html = { path = "../rip_html" }
+rip_text = { path = "../rip_text" }
+rip_escpos = { path = "../rip_escpos" }

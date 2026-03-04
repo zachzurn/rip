@@ -1,0 +1,50 @@
+// ─── Tab ───
+@printer-width(80mm)
+
+// ─── Store Header ───
+|> @image(resources/receipt.png, 125) <|
+#### BURGER BARN ####
+|> 742 Evergreen Terrace <|
+|> Springfield, IL 62704 <|
+|> (555) 867-5309 <|
+
+===
+
+// ─── Order Info ───
+| Order #1042        |> 02/25/2026 |
+| Cashier: Homer S.  |>   12:34 PM |
+
+---
+
+// ─── Items ───
+| Classic Burger     |>  $8.99 |
+| Cheese Fries       |>  $4.50 |
+|   `add bacon`      |>  $1.50 |
+| Lg Lemonade        |>  $3.25 |
+
+...
+
+// ─── Totals ───
+| Subtotal           |> $18.24 |
+| Tax (8.25%)        |>  $1.50 |
+===
+++ | *TOTAL*         |> *$19.74* | ++
+
+---
+
+// ─── Payment ───
+| Visa x4821         |> $19.74 |
+| ~Tip~              |> ~$3.00~ |
+| _Adjusted Total_   |> _$22.74_ |
+
+===
+
+// ─── Footer ───
+|> @qr(https://burgerbarn.com/receipt/1042) <|
+
+|> Thank you for dining with us! <|
+|> *See you soon!* <|
+
+@feed(2)
+@cut()
+@drawer()

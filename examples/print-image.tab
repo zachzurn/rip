@@ -1,0 +1,4 @@
+@printer-width(80mm)
+@image(burger-barn.png)
+@feed(2)
+@cut()

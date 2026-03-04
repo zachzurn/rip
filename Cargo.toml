@@ -1,0 +1,11 @@
+[workspace]
+members = [
+    "rip_parser",
+    "rip_html",
+    "rip_image",
+    "rip_text",
+    "rip_escpos",
+    "rip",
+    "rip_cli",
+]
+resolver = "2"

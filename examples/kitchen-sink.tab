@@ -1,0 +1,161 @@
+// ─── Kitchen Sink Receipt ───
+// Demonstrates every feature in the Receipt-Down spec.
+
+@printer-width(80mm)
+@printer-dpi(203)
+
+// ─── Style Definitions ───
+@style(text, default, 12)
+@style(text-m, default, 16)
+@style(text-l, default, 20)
+@style(title, resources/mona_sans_black.ttf, 24)
+@style(title-m, resources/mona_sans_black.ttf, 30)
+@style(title-l, resources/mona_sans_black.ttf, 36)
+
+// ─── All 6 Size Levels ───
+plain text (text)
+++ medium body text (text-m) ++
++++ large body text (text-l) +++
+## small header (title) ##
+### medium header (title-m) ###
+#### large header (title-l) ####
+
+===
+
+// ─── All Inline Styles ───
+*bold text*
+_underline text_
+`italic text`
+~strikethrough text~
+normal then *bold* then normal
+*unclosed bold applies to rest
+
+===
+
+// ─── Alignment ───
+| left aligned |
+|> right aligned |
+|> centered text <|
+
+---
+
+// ─── Two Column Auto-Align (left + right) ───
+| Left Column |> Right Column |
+| Item A |> $1.00 |
+| Item B |> $2.50 |
+
+---
+
+// ─── Three Column Auto-Align (left + center + right) ───
+| Qty |> Description <| Price |
+| 2x |> Widget <| $4.00 |
+| 1x |> Gadget <| $7.50 |
+
+---
+
+// ─── Explicit Override ───
+|> Everything Right |> Also Right |
+| Both Left <| Left Too <|
+
+---
+
+// ─── Inline Dividers ───
+| Left text | --- | Right text |
+| --- | === | ... |
+| *Total* | === |
+
+---
+
+// ─── Tabular Groups ───
+// Group 1 — widths stay consistent
+| Espresso           |>  $3.50 |
+| Cappuccino         |>  $4.25 |
+| Flat White         |>  $4.75 |
+| Oat Milk (add)     |>  $0.75 |
+
+// Blank line breaks the group — new column widths
+| Subtotal           |> $13.25 |
+| Tax (9%)           |>  $1.19 |
+
+===
+
+// ─── Size-Wrapped Columns ───
+++ | *Subtotal* |> *$13.25* | ++
++++ | *TOTAL* |> *$14.44* | +++
+
+===
+
+// ─── All 3 Divider Types ───
+---
+===
+...
+
+// ─── Dividers Are Flexible Length ───
+----------
+==========
+..........
+
+===
+
+// ─── Images ───
+@image(resources/receipt.png)
+@image(resources/receipt.png, 200)
+@image(resources/receipt.png, 200, 100)
+|> @image(resources/receipt.png, 150) <|
+
+---
+
+// ─── QR Codes ───
+@qr(https://example.com/receipt/1234)
+@qr(https://example.com/receipt/1234, 200)
+|> @qr(https://example.com/receipt/1234) <|
+
+---
+
+// ─── Barcodes ───
+@barcode(CODE128, ABC-12345)
+@barcode(EAN13, 4006381333931)
+
+---
+
+// ─── Escaping ───
+\*not bold\*
+\|not a pipe|
+Order \#1042
+Price: 5\+\+
+\_not underline\_
+\~not strike\~
+\`not italic\`
+\@not a directive
+back\\slash
+
+---
+
+// ─── Blank Lines = Line Feeds ───
+before blank
+
+after blank
+
+
+two blanks above
+
+---
+
+// ─── Styled Columns ───
+| _Underline Left_ |> _Underline Right_ |
+| ~Strike Left~ |> ~Strike Right~ |
+| `Italic Left` |> `Italic Right` |
+| *Bold Left* |> *Bold Right* |
+
+---
+
+// ─── Mixed Styles in Cells ───
+| Normal *bold* normal |> $0.00 |
+
+---
+
+// ─── Printer Commands ───
+@feed(3)
+@cut()
+@cut(partial)
+@drawer()

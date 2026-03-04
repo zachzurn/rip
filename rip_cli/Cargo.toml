@@ -1,0 +1,16 @@
+[package]
+name = "rip_cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI host for Rip markup rendering"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zachzurn/rip"
+authors = ["Zach Zurn"]
+
+[[bin]]
+name = "rip"
+path = "src/main.rs"
+
+[dependencies]
+rip = { path = "../rip" }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

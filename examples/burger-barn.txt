@@ -1,0 +1,41 @@
+
+            [IMAGE]
+          BURGER BARN
+     742 Evergreen Terrace
+     Springfield, IL 62704
+        (555) 867-5309
+
+===============================
+
+Order #1042          02/25/2026
+Cashier: Homer S       12:34 PM
+
+-------------------------------
+
+Classic Burger            $8.99
+Cheese Fries              $4.50
+add bacon                 $1.50
+Lg Lemonade               $3.25
+
+...............................
+
+Subtotal                 $18.24
+Tax (8.25%)               $1.50
+===============================
+TOTAL                    $19.74
+
+-------------------------------
+
+Visa x4821               $19.74
+Tip                       $3.00
+Adjusted Total           $22.74
+
+===============================
+
+           [QR Code]
+
+ Thank you for dining with us!
+         See you soon!
+
+
+

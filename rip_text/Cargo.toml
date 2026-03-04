@@ -1,0 +1,12 @@
+[package]
+name = "rip_text"
+version = "0.1.0"
+edition = "2021"
+description = "Plain text renderer for Rip markup"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zachzurn/rip"
+authors = ["Zach Zurn"]
+
+[dependencies]
+rip_parser = { path = "../rip_parser" }
+taffy = "0.9"

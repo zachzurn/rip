@@ -1,0 +1,128 @@
+
+
+
+plain text (text)
+medium body text (text-m)
+large body text (text-l)
+     small header (title)
+    medium header (title-m)
+    large header (title-l)
+
+===============================
+
+bold text
+underline text
+italic text
+strikethrough text
+normal then bold then normal
+unclosed bold applies to rest
+
+===============================
+
+left aligned
+                  right aligned
+         centered text
+
+-------------------------------
+
+Left Column        Right Column
+Item A                    $1.00
+Item B                    $2.50
+
+-------------------------------
+
+Qty       Description     Price
+2x          Widget        $4.00
+1x          Gadget        $7.50
+
+-------------------------------
+
+Everything Right     Also Right
+Both Left       Left Too
+
+-------------------------------
+
+Left text -----------Right text
+----------===========..........
+Total           ===============
+
+-------------------------------
+
+Espresso                  $3.50
+Cappuccino                $4.25
+Flat White                $4.75
+Oat Milk (add)            $0.75
+
+Subtotal                 $13.25
+Tax (9%)                  $1.19
+
+===============================
+
+Subtotal                 $13.25
+TOTAL                    $14.44
+
+===============================
+
+-------------------------------
+===============================
+...............................
+
+-------------------------------
+===============================
+...............................
+
+===============================
+
+            [IMAGE]
+            [IMAGE]
+            [IMAGE]
+            [IMAGE]
+
+-------------------------------
+
+           [QR Code]
+           [QR Code]
+           [QR Code]
+
+-------------------------------
+
+           [Barcode]
+           [Barcode]
+
+-------------------------------
+
+*not bold*
+|not a pipe|
+Order #1042
+Price: 5++
+_not underline_
+~not strike~
+`not italic`
+@not a directive
+back\slash
+
+-------------------------------
+
+before blank
+
+after blank
+
+
+two blanks above
+
+-------------------------------
+
+Underline Left  Underline Right
+Strike Left        Strike Right
+Italic Left        Italic Right
+Bold Left            Bold Right
+
+-------------------------------
+
+Normal bold norm          $0.00
+
+-------------------------------
+
+
+
+
