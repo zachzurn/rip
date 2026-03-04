@@ -20,7 +20,7 @@ fn synthetic_image(width: u32, height: u32) -> ImageData {
 /// Helper: parse source and render to pixels, loading fonts from
 /// fixtures and providing synthetic images for any referenced URLs.
 fn render(source: &str) -> Result<(u32, u32, Vec<u8>), RenderError> {
-    let fixtures = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures"));
+    let fixtures = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/resources"));
     let nodes = parse(source);
     let res = collect_resources(&nodes);
 
@@ -176,14 +176,14 @@ fn dotted_divider() {
 
 #[test]
 fn local_image_renders() {
-    let (w, h, pixels) = render("@image(test-logo.png)").unwrap();
+    let (w, h, pixels) = render("@image(receipt.png)").unwrap();
     assert!(w > 0 && h > 0);
     assert_eq!(pixels.len(), (w * h) as usize);
 }
 
 #[test]
 fn image_with_dimensions() {
-    let (_, _, pixels) = render("@image(test-logo.png, 50, 50)").unwrap();
+    let (_, _, pixels) = render("@image(receipt.png, 50, 50)").unwrap();
     assert!(!pixels.is_empty());
 }
 

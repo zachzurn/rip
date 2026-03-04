@@ -11,10 +11,10 @@ use crate::text;
 use crate::RenderError;
 
 /// Default body font (JetBrains Mono Medium, OFL-licensed).
-const DEFAULT_FONT: &[u8] = include_bytes!("../assets/JetBrainsMono-Medium.ttf");
+const DEFAULT_FONT: &[u8] = include_bytes!("../assets/jetbrains_mono_medium.ttf");
 
 /// Default title font (Hubot Sans Bold, OFL-licensed).
-const DEFAULT_TITLE_FONT: &[u8] = include_bytes!("../assets/HubotSans-Bold.ttf");
+const DEFAULT_TITLE_FONT: &[u8] = include_bytes!("../assets/hubot_sans_bold.ttf");
 
 /// Per-size font configuration collected from @style directives.
 struct FontStyle {

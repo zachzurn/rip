@@ -7,6 +7,9 @@ use taffy::prelude::{
 ///
 /// Uses monospace metrics: char_width = font_height × 0.6,
 /// where font_height in mm = points × 25.4 / 72.
+///
+/// This was tested to get a similar size to what receipt printers
+/// would have at our default sizes
 fn chars_per_line(paper_width_mm: f64, font_points: f64) -> usize {
     let char_width_mm = font_points * (25.4 / 72.0) * 0.6;
     let chars = (paper_width_mm / char_width_mm).floor() as usize;

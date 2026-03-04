@@ -1,11 +1,13 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::fs;
-use std::path::Path;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use std::time::{Duration, Instant};
 
 use rip::{ImageData, RenderResources};
+use sha2::{Digest, Sha256};
 
 // ---------------------------------------------------------------------------
 // Tracking allocator — wraps System, counts bytes via atomics
@@ -82,41 +84,227 @@ fn fmt_count(n: usize) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// CLI arguments
+// ---------------------------------------------------------------------------
+
+enum Output {
+    File(String),
+    Bench,
+}
+
+struct Args {
+    rip_path: String,
+    output: Output,
+    base_dir: PathBuf,
+    cache_dir: Option<PathBuf>,
+}
+
+fn parse_args() -> Args {
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+
+    let mut base_dir: Option<PathBuf> = None;
+    let mut cache_dir: Option<PathBuf> = None;
+    let mut positional: Vec<String> = Vec::new();
+
+    let mut i = 0;
+    while i < raw.len() {
+        match raw[i].as_str() {
+            "--base" => {
+                i += 1;
+                if i >= raw.len() {
+                    eprintln!("error: --base requires a folder argument");
+                    process::exit(1);
+                }
+                base_dir = Some(PathBuf::from(&raw[i]));
+            }
+            "--cache" => {
+                i += 1;
+                if i >= raw.len() {
+                    eprintln!("error: --cache requires a folder argument");
+                    process::exit(1);
+                }
+                cache_dir = Some(PathBuf::from(&raw[i]));
+            }
+            _ => {
+                positional.push(raw[i].clone());
+            }
+        }
+        i += 1;
+    }
+
+    if positional.len() < 2 {
+        usage();
+    }
+
+    let rip_path = positional[0].clone();
+    let output = if positional[1] == "--bench" {
+        Output::Bench
+    } else {
+        Output::File(positional[1].clone())
+    };
+
+    // Default base_dir to the .rip file's parent directory
+    let base_dir = base_dir.unwrap_or_else(|| {
+        Path::new(&rip_path)
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf()
+    });
+
+    Args { rip_path, output, base_dir, cache_dir }
+}
+
+// ---------------------------------------------------------------------------
 // Resource loading
 // ---------------------------------------------------------------------------
 
-fn load_rip(rip_path: &str) -> (Vec<rip::Node>, RenderResources) {
-    let source = fs::read_to_string(rip_path).unwrap_or_else(|e| {
-        eprintln!("error: cannot read {rip_path}: {e}");
+const MAX_DOWNLOAD_BYTES: u64 = 10 * 1024 * 1024; // 10MB
+
+fn is_url(s: &str) -> bool {
+    s.starts_with("http://") || s.starts_with("https://")
+}
+
+/// Load a local file, verifying it stays within base_dir.
+fn load_local(url: &str, base_dir: &Path) -> Option<Vec<u8>> {
+    let canonical_base = match fs::canonicalize(base_dir) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("warning: cannot resolve base dir {}: {e}", base_dir.display());
+            return None;
+        }
+    };
+
+    let joined = base_dir.join(url);
+    let canonical = match fs::canonicalize(&joined) {
+        Ok(p) => p,
+        Err(_) => return None, // file doesn't exist, silently skip
+    };
+
+    if !canonical.starts_with(&canonical_base) {
+        eprintln!("warning: path escapes base directory, skipping: {url}");
+        return None;
+    }
+
+    match fs::read(&canonical) {
+        Ok(bytes) => Some(bytes),
+        Err(e) => {
+            eprintln!("warning: cannot read {url}: {e}");
+            None
+        }
+    }
+}
+
+/// Build a cache filename from a URL: sha256 hex + original extension.
+fn cache_key(url: &str) -> String {
+    let hash = Sha256::digest(url.as_bytes());
+    let hex = format!("{hash:x}");
+
+    // Preserve extension from URL (strip query string first)
+    let path_part = url.split('?').next().unwrap_or(url);
+    let ext = Path::new(path_part)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("bin");
+
+    format!("{hex}.{ext}")
+}
+
+/// Download a remote URL, using cache_dir if provided.
+fn load_remote(url: &str, cache_dir: Option<&Path>) -> Option<Vec<u8>> {
+    // Check cache first
+    if let Some(dir) = cache_dir {
+        let cached_path = dir.join(cache_key(url));
+        if let Ok(bytes) = fs::read(&cached_path) {
+            return Some(bytes);
+        }
+    }
+
+    // Download
+    eprintln!("downloading {url}...");
+    let response = match ureq::get(url).call() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("warning: download failed for {url}: {e}");
+            return None;
+        }
+    };
+
+    let mut bytes = Vec::new();
+    match response
+        .into_body()
+        .with_config()
+        .limit(MAX_DOWNLOAD_BYTES)
+        .reader()
+        .read_to_end(&mut bytes)
+    {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("warning: failed reading response for {url}: {e}");
+            return None;
+        }
+    }
+
+    // Write to cache
+    if let Some(dir) = cache_dir {
+        let _ = fs::create_dir_all(dir);
+        let cached_path = dir.join(cache_key(url));
+        if let Err(e) = fs::write(&cached_path, &bytes) {
+            eprintln!("warning: cannot write cache for {url}: {e}");
+        }
+    }
+
+    Some(bytes)
+}
+
+/// Load raw bytes for a resource URL (local or remote).
+fn load_resource(url: &str, base_dir: &Path, cache_dir: Option<&Path>) -> Option<Vec<u8>> {
+    if is_url(url) {
+        load_remote(url, cache_dir)
+    } else {
+        load_local(url, base_dir)
+    }
+}
+
+/// Decode image bytes to grayscale ImageData.
+fn decode_image(url: &str, bytes: &[u8]) -> Option<ImageData> {
+    match image::load_from_memory(bytes) {
+        Ok(img) => {
+            let gray = img.to_luma8();
+            Some(ImageData {
+                width: gray.width(),
+                height: gray.height(),
+                pixels: gray.into_raw(),
+            })
+        }
+        Err(e) => {
+            eprintln!("warning: cannot decode image {url}: {e}");
+            None
+        }
+    }
+}
+
+fn load_rip(args: &Args) -> (Vec<rip::Node>, RenderResources) {
+    let source = fs::read_to_string(&args.rip_path).unwrap_or_else(|e| {
+        eprintln!("error: cannot read {}: {e}", args.rip_path);
         process::exit(1);
     });
 
-    let base_dir = Path::new(rip_path).parent().unwrap();
     let nodes = rip::parse(&source);
     let res = rip::collect_resources(&nodes);
 
     let mut resources = RenderResources::default();
+    let cache = args.cache_dir.as_deref();
 
     for url in &res.fonts {
-        let path = base_dir.join(url);
-        if let Ok(bytes) = fs::read(&path) {
+        if let Some(bytes) = load_resource(url, &args.base_dir, cache) {
             resources.fonts.insert(url.clone(), bytes);
         }
     }
 
     for url in &res.images {
-        let path = base_dir.join(url);
-        if let Ok(bytes) = fs::read(&path) {
-            if let Ok(img) = image::load_from_memory(&bytes) {
-                let gray = img.to_luma8();
-                resources.images.insert(
-                    url.clone(),
-                    ImageData {
-                        width: gray.width(),
-                        height: gray.height(),
-                        pixels: gray.into_raw(),
-                    },
-                );
+        if let Some(bytes) = load_resource(url, &args.base_dir, cache) {
+            if let Some(img) = decode_image(url, &bytes) {
+                resources.images.insert(url.clone(), img);
             }
         }
     }
@@ -163,14 +351,19 @@ fn bench_fn<F: FnMut()>(name: &str, iterations: u32, mut f: F) {
     );
 }
 
-fn run_bench(rip_path: &str) {
+fn run_bench(args: &Args) {
     let iterations = 100;
-    let (nodes, resources) = load_rip(rip_path);
 
-    let name = Path::new(rip_path)
+    // Warmup: load + render once so downloads, cache, and OS page faults
+    // are all settled before we start timing.
+    let _ = load_rip(args);
+
+    let (nodes, resources) = load_rip(args);
+
+    let name = Path::new(&args.rip_path)
         .file_stem()
         .and_then(|s| s.to_str())
-        .unwrap_or(rip_path);
+        .unwrap_or(&args.rip_path);
 
     eprintln!("benchmarking {name} ({iterations} iterations):");
 
@@ -280,8 +473,8 @@ fn render_to_file(nodes: &[rip::Node], resources: &RenderResources, out_path: &s
 // ---------------------------------------------------------------------------
 
 fn usage() -> ! {
-    eprintln!("Usage: rip <file> <output>");
-    eprintln!("       rip <file> --bench");
+    eprintln!("Usage: rip <file> <output> [options]");
+    eprintln!("       rip <file> --bench  [options]");
     eprintln!();
     eprintln!("Output formats (determined by extension):");
     eprintln!("  .png       8-bit grayscale PNG");
@@ -291,23 +484,21 @@ fn usage() -> ! {
     eprintln!("  .txt       Plain text (monospace)");
     eprintln!();
     eprintln!("Options:");
-    eprintln!("  --bench    Benchmark all render formats (100 iterations)");
+    eprintln!("  --bench          Benchmark all render formats (100 iterations)");
+    eprintln!("  --base <folder>  Base directory for resolving relative paths");
+    eprintln!("                   (defaults to the .rip file's parent directory)");
+    eprintln!("  --cache <folder> Cache downloaded images/fonts to this folder");
     process::exit(1);
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 3 {
-        usage();
-    }
+    let args = parse_args();
 
-    let rip_path = &args[1];
-
-    if args[2] == "--bench" {
-        run_bench(rip_path);
-    } else {
-        let out_path = &args[2];
-        let (nodes, resources) = load_rip(rip_path);
-        render_to_file(&nodes, &resources, out_path);
+    match &args.output {
+        Output::Bench => run_bench(&args),
+        Output::File(out_path) => {
+            let (nodes, resources) = load_rip(&args);
+            render_to_file(&nodes, &resources, out_path);
+        }
     }
 }
