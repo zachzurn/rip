@@ -2,25 +2,51 @@
 
 A markup language for receipts. Parse it, render it to pixels, HTML, plain text, or ESC/POS binary.
 
+Jump to: [Syntax](#syntax) · [Cli Quick Start](#cli-quick-start) · [Rust Quick Start](#rust-quick-start) 
+
 ```
 #### BURGER BARN ####
 |> 742 Evergreen Terrace <|
 
 ===
 
-| Classic Burger |> $8.99 |
-| Cheese Fries |> $4.50 |
+| Classic Burger  |>   $8.99 |
+| Cheese Fries    |>   $4.50 |
 
 ---
 
-++ | *TOTAL* |> *$13.49* | ++
+++ | *TOTAL*      |> *$13.49* | ++
 
 @cut()
 ```
 
 ![Rendered receipt example](examples/readme-example.png)
 
-## Quick start
+## Syntax
+
+See [SPEC.md](SPEC.md) for the full language reference. The short version:
+
+- **Text**: just type it
+- **Styles**: `*bold*` `_underline_` `` `italic` `` `~strikethrough~`
+- **Sizes**: `## header ##` (more `#` = bigger), `++ body ++` (more `+` = bigger)
+- **Columns**: `| left | right |` with `>` / `<` for alignment
+- **Dividers**: `---` thin, `===` thick, `...` dotted
+- **Directives**: `@image()` `@qr()` `@barcode()` `@cut()` `@feed()` `@drawer()` `@style()` `@printer-width()` `@printer-dpi()`
+
+## CLI Quick Start
+
+```
+cargo install --path rip_cli
+
+rip receipt.rip output.png      # grayscale PNG
+rip receipt.rip output.html     # HTML
+rip receipt.rip output.txt      # plain text
+rip receipt.rip output.bin      # ESC/POS binary
+rip receipt.rip output.raster   # 1-bit packed raster
+rip receipt.rip --bench         # benchmark all renderers
+```
+
+## Rust Quick start
 
 ```rust
 let nodes = rip::parse("## Hello\n---\n| Item |> $5.00 |");
@@ -52,19 +78,6 @@ let escpos = rip::render_escpos(&nodes, &resources);
 | `rip_escpos` | Renders to ESC/POS binary |
 | `rip_cli` | CLI tool for rendering files |
 
-## CLI
-
-```
-cargo install --path rip_cli
-
-rip receipt.rip output.png      # grayscale PNG
-rip receipt.rip output.html     # HTML
-rip receipt.rip output.txt      # plain text
-rip receipt.rip output.bin      # ESC/POS binary
-rip receipt.rip output.raster   # 1-bit packed raster
-rip receipt.rip --bench         # benchmark all renderers
-```
-
 ## How images work
 
 The core library doesn't decode images. The host (your app) decodes PNG/JPEG/whatever into grayscale pixels and hands them over via `RenderResources`:
@@ -86,17 +99,6 @@ let output = rip::render_luma8(&nodes, &resources).unwrap();
 ```
 
 This keeps the core dependency-free from image codecs, which matters for WASM, Android, and embedded targets.
-
-## Syntax
-
-See [SPEC.md](SPEC.md) for the full language reference. The short version:
-
-- **Text**: just type it
-- **Styles**: `*bold*` `_underline_` `` `italic` `` `~strikethrough~`
-- **Sizes**: `## header ##` (more `#` = bigger), `++ body ++` (more `+` = bigger)
-- **Columns**: `| left | right |` with `>` / `<` for alignment
-- **Dividers**: `---` thin, `===` thick, `...` dotted
-- **Directives**: `@image()` `@qr()` `@barcode()` `@cut()` `@feed()` `@drawer()` `@style()` `@printer-width()` `@printer-dpi()`
 
 ## License
 
