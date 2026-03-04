@@ -18,6 +18,8 @@ A markup language for receipts. Parse it, render it to pixels, HTML, plain text,
 @cut()
 ```
 
+![Rendered receipt example](examples/readme-example.png)
+
 ## Quick start
 
 ```rust
@@ -99,3 +101,7 @@ See [SPEC.md](SPEC.md) for the full language reference. The short version:
 ## License
 
 MIT OR Apache-2.0
+
+## LLM Use
+
+Claude Code was heavily used in the creation of the code in this project.
