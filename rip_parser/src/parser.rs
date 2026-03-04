@@ -335,6 +335,10 @@ fn parse_directive(line: &str, align: Option<Align>) -> Option<Node> {
             let dpi = args.first()?.parse::<u32>().ok()?;
             Some(Node::PrinterDpi { dpi })
         }
+        "printer-threshold" => {
+            let threshold = args.first()?.parse::<u8>().ok()?;
+            Some(Node::PrinterThreshold { threshold })
+        }
         "style" => {
             let level = parse_size_level(args.first()?)?;
             let font = args.get(1)?.to_string();

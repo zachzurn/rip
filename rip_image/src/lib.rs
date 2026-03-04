@@ -5,7 +5,7 @@ pub mod render;
 pub mod text;
 
 use rip_parser::ast::Node;
-use rip_parser::RenderResources;
+use rip_parser::{RenderResources, BLACK_THRESHOLD};
 
 /// Errors that can occur during rendering.
 #[derive(Debug)]
@@ -52,23 +52,25 @@ pub fn render_pixels_with_dirty(
 ///
 /// Returns `(width, height, data)` where `data` is 1-bit packed rows
 /// (MSB first, `ceil(width/8)` bytes per row). Pixels below the
-/// threshold (128) are black (1), at or above are white (0).
+/// threshold are black (1), at or above are white (0).
+/// Honors `@printer-threshold` if present; defaults to 128.
 /// Suitable for `GS v 0` raster print commands.
 pub fn render_raster(
     nodes: &[Node],
     resources: &RenderResources,
 ) -> Result<(u32, u32, Vec<u8>), RenderError> {
+    let threshold = collect_threshold(nodes);
     let ctx = render::RenderContext::new(nodes, resources);
     let (width, height, pixels, _dirty) = ctx.render(nodes)?;
-    let raster = encode_raster(width, &pixels);
+    let raster = encode_raster(width, &pixels, threshold);
     Ok((width, height, raster))
 }
 
 /// Pack a grayscale pixel buffer into 1-bit raster data.
 ///
-/// Each byte holds 8 pixels, MSB first. Pixels < 128 are set (black).
+/// Each byte holds 8 pixels, MSB first. Pixels below `threshold` are set (black).
 /// Returns `ceil(width/8) * height` bytes.
-pub fn encode_raster(width: u32, pixels: &[u8]) -> Vec<u8> {
+pub fn encode_raster(width: u32, pixels: &[u8], threshold: u8) -> Vec<u8> {
     let w = width as usize;
     let row_bytes = (w + 7) / 8;
     let height = pixels.len() / w;
@@ -78,11 +80,21 @@ pub fn encode_raster(width: u32, pixels: &[u8]) -> Vec<u8> {
         let src_row = y * w;
         let dst_row = y * row_bytes;
         for x in 0..w {
-            if pixels[src_row + x] < 128 {
+            if pixels[src_row + x] < threshold {
                 out[dst_row + x / 8] |= 0x80 >> (x % 8);
             }
         }
     }
 
     out
+}
+
+/// Extract the black/white threshold from nodes, defaulting to `BLACK_THRESHOLD`.
+fn collect_threshold(nodes: &[Node]) -> u8 {
+    for node in nodes {
+        if let Node::PrinterThreshold { threshold } = node {
+            return *threshold;
+        }
+    }
+    BLACK_THRESHOLD
 }

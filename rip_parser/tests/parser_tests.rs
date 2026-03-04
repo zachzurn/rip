@@ -335,6 +335,12 @@ fn printer_dpi_directive() {
 }
 
 #[test]
+fn printer_threshold_directive() {
+    let nodes = parse("@printer-threshold(160)");
+    assert_eq!(nodes, vec![Node::PrinterThreshold { threshold: 160 }]);
+}
+
+#[test]
 fn style_directive() {
     let nodes = parse("@style(text, https://fonts.example.com/Mono.ttf, 12)");
     assert_eq!(

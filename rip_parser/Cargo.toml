@@ -7,5 +7,9 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/zachzurn/rip"
 authors = ["Zach Zurn"]
 
+[dependencies]
+qrcode = "0.14"
+barcoders = "2.0"
+
 [dev-dependencies]
 pretty_assertions = "1"

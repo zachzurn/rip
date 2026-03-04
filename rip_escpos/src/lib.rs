@@ -8,7 +8,8 @@
 mod cmd;
 
 use rip_parser::ast::*;
-use rip_parser::RenderResources;
+use rip_parser::text_util::{align_offset, divider_char, spans_to_text, word_wrap};
+use rip_parser::{RenderResources, BLACK_THRESHOLD};
 use taffy::prelude::{
     auto, length, AlignItems, Display, FlexDirection, TaffyMaxContent, TaffyTree,
 };
@@ -30,7 +31,7 @@ fn is_title(size: Size) -> bool {
     matches!(size, Size::Title | Size::TitleM | Size::TitleL)
 }
 
-// ─── Layout helpers (same as rip_text) ──────────────────────────────
+// ─── Layout helpers ──────────────────────────────────────────────────
 
 /// Compute characters per line for ESC/POS output.
 ///
@@ -51,91 +52,6 @@ fn printable_dots(paper_width_mm: f64, dpi: f64) -> u32 {
     let margin_mm = 4.0;
     let printable_mm = (paper_width_mm - margin_mm * 2.0).max(paper_width_mm * 0.5);
     (printable_mm * dpi / 25.4).round().max(8.0) as u32
-}
-
-/// Concatenate span texts, stripping all style information.
-fn spans_to_text(spans: &[Span]) -> String {
-    spans.iter().map(|s| s.text.as_str()).collect()
-}
-
-/// Center text within the given width, padding with spaces.
-#[allow(dead_code)]
-fn center(text: &str, width: usize) -> String {
-    if text.len() >= width {
-        return text[..width].to_string();
-    }
-    let pad = (width - text.len()) / 2;
-    let mut s = String::with_capacity(width);
-    for _ in 0..pad {
-        s.push(' ');
-    }
-    s.push_str(text);
-    s
-}
-
-/// Word-wrap text to fit within `max_width` characters.
-fn word_wrap(text: &str, max_width: usize) -> Vec<String> {
-    if text.is_empty() {
-        return vec![String::new()];
-    }
-    if text.len() <= max_width {
-        return vec![text.to_string()];
-    }
-
-    let mut lines = Vec::new();
-    let mut current = String::new();
-
-    for word in text.split_whitespace() {
-        if current.is_empty() {
-            if word.len() > max_width {
-                let mut remaining = word;
-                while remaining.len() > max_width {
-                    lines.push(remaining[..max_width].to_string());
-                    remaining = &remaining[max_width..];
-                }
-                current = remaining.to_string();
-            } else {
-                current = word.to_string();
-            }
-        } else if current.len() + 1 + word.len() <= max_width {
-            current.push(' ');
-            current.push_str(word);
-        } else {
-            lines.push(current);
-            if word.len() > max_width {
-                let mut remaining = word;
-                while remaining.len() > max_width {
-                    lines.push(remaining[..max_width].to_string());
-                    remaining = &remaining[max_width..];
-                }
-                current = remaining.to_string();
-            } else {
-                current = word.to_string();
-            }
-        }
-    }
-
-    if !current.is_empty() {
-        lines.push(current);
-    }
-
-    if lines.is_empty() {
-        vec![String::new()]
-    } else {
-        lines
-    }
-}
-
-/// Compute alignment offset (in characters) within a cell.
-fn align_offset(cell_width: usize, content_width: usize, align: Align) -> usize {
-    if content_width >= cell_width {
-        return 0;
-    }
-    match align {
-        Align::Left => 0,
-        Align::Right => cell_width - content_width,
-        Align::Center => (cell_width - content_width) / 2,
-    }
 }
 
 /// Compute column layout using Taffy flexbox (same settings as rip_image/rip_text).
@@ -186,15 +102,6 @@ fn column_layout(total_width: usize, cell_count: usize) -> Vec<(usize, usize)> {
         .collect()
 }
 
-/// Map a LineStyle to its divider character.
-fn divider_char(style: LineStyle) -> char {
-    match style {
-        LineStyle::Thin => '-',
-        LineStyle::Thick => '=',
-        LineStyle::Dotted => '.',
-    }
-}
-
 // ─── Image helpers ───────────────────────────────────────────────────
 
 /// Convert points to dots at the given DPI.
@@ -237,7 +144,7 @@ fn scale_nn(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u
 /// Returns `(padded_width, height, packed_data)` where `padded_width`
 /// is a multiple of 8. Each byte is MSB-first: bit 7 = leftmost pixel.
 /// A set bit (1) = black, cleared bit (0) = white.
-fn to_raster(pixels: &[u8], width: u32, height: u32) -> (u32, u32, Vec<u8>) {
+fn to_raster(pixels: &[u8], width: u32, height: u32, threshold: u8) -> (u32, u32, Vec<u8>) {
     let padded_width = (width + 7) & !7;
     let bytes_per_row = (padded_width / 8) as usize;
     let w = width as usize;
@@ -247,7 +154,7 @@ fn to_raster(pixels: &[u8], width: u32, height: u32) -> (u32, u32, Vec<u8>) {
     for y in 0..height as usize {
         for x in 0..w {
             let pixel = pixels[y * w + x];
-            if pixel < 190 {
+            if pixel < threshold {
                 let byte_idx = y * bytes_per_row + x / 8;
                 let bit_idx = 7 - (x % 8);
                 data[byte_idx] |= 1 << bit_idx;
@@ -267,12 +174,14 @@ fn to_raster(pixels: &[u8], width: u32, height: u32) -> (u32, u32, Vec<u8>) {
 pub fn render_escpos(nodes: &[Node], resources: &RenderResources) -> Vec<u8> {
     let mut paper_width_mm = 80.0;
     let mut dpi = 203.0;
+    let mut threshold = BLACK_THRESHOLD;
 
     // Pass 1: collect config
     for node in nodes {
         match node {
             Node::PrinterWidth { mm } => paper_width_mm = *mm,
             Node::PrinterDpi { dpi: d } => dpi = *d as f64,
+            Node::PrinterThreshold { threshold: t } => threshold = *t,
             _ => {}
         }
     }
@@ -286,7 +195,7 @@ pub fn render_escpos(nodes: &[Node], resources: &RenderResources) -> Vec<u8> {
 
     // Pass 2: render nodes
     for node in nodes {
-        render_node(node, base_width, max_dots, dpi, resources, &mut buf);
+        render_node(node, base_width, max_dots, dpi, threshold, resources, &mut buf);
     }
 
     buf
@@ -298,6 +207,7 @@ fn render_node(
     base_width: usize,
     max_dots: u32,
     dpi: f64,
+    threshold: u8,
     resources: &RenderResources,
     buf: &mut Vec<u8>,
 ) {
@@ -380,7 +290,7 @@ fn render_node(
 
                 let (scaled_w, scaled_h) = scale_dims(img.width, img.height, img_max_w, img_max_h);
                 let scaled = scale_nn(&img.pixels, img.width, img.height, scaled_w, scaled_h);
-                let (raster_w, raster_h, raster_data) = to_raster(&scaled, scaled_w, scaled_h);
+                let (raster_w, raster_h, raster_data) = to_raster(&scaled, scaled_w, scaled_h, threshold);
 
                 // Set alignment
                 let needs_justify =
@@ -449,6 +359,7 @@ fn render_node(
         // Config nodes — consumed in pass 1
         Node::PrinterWidth { .. }
         | Node::PrinterDpi { .. }
+        | Node::PrinterThreshold { .. }
         | Node::Style { .. } => {}
     }
 }
@@ -533,8 +444,6 @@ fn emit_styled_columns(
             }
         }
     }
-
-    // Trim trailing spaces is not needed for ESC/POS
 }
 
 /// Set or reset a span style via ESC/POS commands.

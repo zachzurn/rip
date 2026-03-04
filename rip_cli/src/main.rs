@@ -377,7 +377,7 @@ fn run_bench(args: &Args) {
 
     let output = rip::render_luma8(&nodes, &resources).unwrap();
     bench_fn("pack_luma1", iterations, || {
-        let _ = rip::pack_luma1(output.width, &output.pixels);
+        let _ = rip::pack_luma1(output.width, &output.pixels, rip::BLACK_THRESHOLD);
     });
 
     bench_fn("render_escpos", iterations, || {

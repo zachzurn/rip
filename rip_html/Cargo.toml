@@ -9,8 +9,6 @@ authors = ["Zach Zurn"]
 
 [dependencies]
 rip_parser = { path = "../rip_parser" }
-qrcode = "0.14"
-barcoders = "2.0"
 
 [dev-dependencies]
 pretty_assertions = "1"

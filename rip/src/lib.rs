@@ -16,6 +16,7 @@
 pub use rip_parser::{
     parse, collect_resources,
     ImageData, RenderResources, ResourceUrls,
+    BLACK_THRESHOLD,
 };
 pub use rip_parser::ast::Node;
 pub use rip_image::RenderError;
@@ -54,14 +55,16 @@ pub fn render_luma8(
 /// Render to 1-bit packed pixels (thresholded black/white).
 ///
 /// Output is MSB-first, `ceil(width/8)` bytes per row.
+/// Honors `@printer-threshold` if present; defaults to 128.
 /// Suitable for ESC/POS `GS v 0` raster commands or 1-bit PNG encoding.
 pub fn render_luma1(
     nodes: &[Node],
     resources: &RenderResources,
 ) -> Result<PixelOutput, RenderError> {
+    let threshold = collect_threshold(nodes);
     let (width, height, pixels, dirty_rows) =
         rip_image::render_pixels_with_dirty(nodes, resources)?;
-    let packed = rip_image::encode_raster(width, &pixels);
+    let packed = rip_image::encode_raster(width, &pixels, threshold);
     Ok(PixelOutput { width, height, pixels: packed, dirty_rows })
 }
 
@@ -92,7 +95,17 @@ pub fn render_escpos(nodes: &[Node], resources: &RenderResources) -> Vec<u8> {
 ///
 /// Utility for hosts that render with `render_luma8` but need 1-bit
 /// output for printer commands. Each byte holds 8 pixels (MSB first),
-/// pixels < 128 are set (black).
-pub fn pack_luma1(width: u32, pixels: &[u8]) -> Vec<u8> {
-    rip_image::encode_raster(width, pixels)
+/// pixels below `threshold` are set (black).
+pub fn pack_luma1(width: u32, pixels: &[u8], threshold: u8) -> Vec<u8> {
+    rip_image::encode_raster(width, pixels, threshold)
+}
+
+/// Extract the black/white threshold from nodes, defaulting to `BLACK_THRESHOLD`.
+fn collect_threshold(nodes: &[Node]) -> u8 {
+    for node in nodes {
+        if let Node::PrinterThreshold { threshold } = node {
+            return *threshold;
+        }
+    }
+    BLACK_THRESHOLD
 }

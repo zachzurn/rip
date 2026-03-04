@@ -254,7 +254,8 @@ impl<'a> RenderContext<'a> {
 
             // Non-visual nodes
             Node::PrinterWidth { .. } | Node::PrinterDpi { .. }
-            | Node::Style { .. } | Node::Cut { .. } | Node::Drawer => 0,
+            | Node::PrinterThreshold { .. } | Node::Style { .. }
+            | Node::Cut { .. } | Node::Drawer => 0,
         }
     }
 
@@ -494,7 +495,7 @@ impl<'a> RenderContext<'a> {
             Node::Barcode { format, data } => {
                 *y += self.padding;
 
-                if let Some(encoded) = barcode::encode_barcode(format, data) {
+                if let Some(encoded) = rip_parser::encode::encode_barcode(format, data) {
                     let pattern_len = encoded.len() as u32;
                     let barcode_h = layout::pt_to_px(50.0, self.dpi) as u32;
 
@@ -523,7 +524,8 @@ impl<'a> RenderContext<'a> {
 
             // Non-visual nodes
             Node::PrinterWidth { .. } | Node::PrinterDpi { .. }
-            | Node::Style { .. } | Node::Cut { .. } | Node::Drawer => {}
+            | Node::PrinterThreshold { .. } | Node::Style { .. }
+            | Node::Cut { .. } | Node::Drawer => {}
         }
     }
 }

@@ -121,6 +121,7 @@ Backslash escapes the next character:
 @printer-width(8cm)               so do cm
 @printer-dpi(203)                 default 203 (standard thermal)
 @printer-dpi(300)                 high-res thermal
+@printer-threshold(128)           default 128 (0–255, black/white cutoff)
 ```
 
 ### Fonts

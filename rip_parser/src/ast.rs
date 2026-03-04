@@ -102,6 +102,9 @@ pub enum Node {
     /// `@printer-dpi(203)` — printer DPI.
     PrinterDpi { dpi: u32 },
 
+    /// `@printer-threshold(128)` — black/white threshold (0–255).
+    PrinterThreshold { threshold: u8 },
+
     /// `@style(level, font, points)` — font and size assignment.
     Style {
         level: Size,

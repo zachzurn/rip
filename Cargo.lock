@@ -409,9 +409,7 @@ dependencies = [
 name = "rip_html"
 version = "0.1.0"
 dependencies = [
- "barcoders",
  "pretty_assertions",
- "qrcode",
  "rip_parser",
 ]
 
@@ -419,10 +417,8 @@ dependencies = [
 name = "rip_image"
 version = "0.1.0"
 dependencies = [
- "barcoders",
  "fontdue",
  "pretty_assertions",
- "qrcode",
  "rip_parser",
  "taffy",
 ]
@@ -431,7 +427,9 @@ dependencies = [
 name = "rip_parser"
 version = "0.1.0"
 dependencies = [
+ "barcoders",
  "pretty_assertions",
+ "qrcode",
 ]
 
 [[package]]

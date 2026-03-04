@@ -1,10 +1,7 @@
 use rip_parser::ast::*;
+use rip_parser::encode;
 use std::collections::HashMap;
 use std::fmt::Write;
-
-use qrcode::QrCode;
-use qrcode::render::svg;
-use barcoders::generators::svg::SVG as BarcodeSVG;
 
 /// Configuration collected from @printer-width and @style directives during rendering.
 struct StyleConfig {
@@ -146,26 +143,16 @@ fn render_node(node: &Node, _config: &StyleConfig, out: &mut String) {
             });
             let dim = size.unwrap_or(150.0) as u32;
             let _ = write!(out, "<div class=\"qr{align_class}\">");
-            if let Ok(code) = QrCode::new(data.as_bytes()) {
-                let svg_str = code
-                    .render::<svg::Color>()
-                    .min_dimensions(dim, dim)
-                    .quiet_zone(true)
-                    .dark_color(svg::Color("#000000"))
-                    .light_color(svg::Color("#ffffff"))
-                    .build();
-                out.push_str(&svg_str);
+            if let Some(grid) = encode::encode_qr(data) {
+                out.push_str(&qr_to_svg(&grid, dim));
             }
             out.push_str("</div>\n");
         }
 
         Node::Barcode { format, data } => {
             let _ = write!(out, "<div class=\"barcode\">");
-            if let Some(encoded) = encode_barcode(format, data) {
-                let svg_gen = BarcodeSVG::new(50);
-                if let Ok(svg_str) = svg_gen.generate(&encoded) {
-                    out.push_str(&svg_str);
-                }
+            if let Some(encoded) = encode::encode_barcode(format, data) {
+                out.push_str(&barcode_to_svg(&encoded, 50));
             }
             out.push_str("</div>\n");
         }
@@ -178,7 +165,8 @@ fn render_node(node: &Node, _config: &StyleConfig, out: &mut String) {
 
         // Directives that don't produce visible output
         Node::PrinterWidth { .. } | Node::PrinterDpi { .. }
-        | Node::Style { .. } | Node::Cut { .. } | Node::Drawer => {}
+        | Node::PrinterThreshold { .. } | Node::Style { .. }
+        | Node::Cut { .. } | Node::Drawer => {}
     }
 }
 
@@ -225,32 +213,42 @@ fn align_css(align: Align) -> &'static str {
     }
 }
 
-/// Encode barcode data using the specified format. Returns the encoded bar pattern.
-fn encode_barcode(format: &str, data: &str) -> Option<Vec<u8>> {
-    use barcoders::sym::code128::Code128;
-    use barcoders::sym::code39::Code39;
-    use barcoders::sym::codabar::Codabar;
-    use barcoders::sym::ean13::EAN13;
-    use barcoders::sym::ean8::EAN8;
+/// Render a QR module grid to an inline SVG string.
+///
+/// Adds a 4-module quiet zone (per QR spec) and a white background.
+fn qr_to_svg(grid: &encode::QrGrid, size: u32) -> String {
+    let w = grid.width;
+    let quiet = 4u32; // standard quiet zone
+    let total = w + 2 * quiet;
 
-    match format.to_uppercase().as_str() {
-        "CODE128" => {
-            // barcoders requires a character set prefix:
-            // À = Set A, Ɓ = Set B (general ASCII), Ć = Set C (numeric pairs)
-            // Default to Set B if no prefix is present.
-            let prefixed = if data.starts_with('À') || data.starts_with('Ɓ') || data.starts_with('Ć') {
-                data.to_string()
-            } else {
-                format!("Ɓ{data}")
-            };
-            Code128::new(&prefixed).ok().map(|b| b.encode())
+    let mut path = String::new();
+    for row in 0..w {
+        for col in 0..w {
+            if grid.modules[(row * w + col) as usize] {
+                let x = col + quiet;
+                let y = row + quiet;
+                let _ = write!(path, "M{x},{y}h1v1h-1z");
+            }
         }
-        "CODE39" => Code39::new(data).ok().map(|b| b.encode()),
-        "EAN13" => EAN13::new(data).ok().map(|b| b.encode()),
-        "EAN8" => EAN8::new(data).ok().map(|b| b.encode()),
-        "CODABAR" => Codabar::new(data).ok().map(|b| b.encode()),
-        _ => None,
     }
+
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {total} {total}" width="{size}" height="{size}"><rect width="{total}" height="{total}" fill="#fff"/><path d="{path}" fill="#000"/></svg>"##,
+    )
+}
+
+/// Render a 1D barcode bar pattern to an inline SVG string.
+fn barcode_to_svg(bars: &[u8], height: u32) -> String {
+    let w = bars.len();
+    let mut path = String::new();
+    for (i, &bar) in bars.iter().enumerate() {
+        if bar == 1 {
+            let _ = write!(path, "M{i},0h1v{height}h-1z");
+        }
+    }
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {height}" preserveAspectRatio="none"><path d="{path}" fill="#000"/></svg>"##,
+    )
 }
 
 /// Minimal HTML entity escaping.

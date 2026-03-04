@@ -1,11 +1,19 @@
 pub mod ast;
+pub mod encode;
 pub mod inline;
 pub mod parser;
+pub mod text_util;
 
 use std::collections::HashMap;
 
 pub use ast::*;
 pub use parser::parse;
+
+/// Grayscale threshold for black/white rasterization.
+///
+/// Pixels below this value are considered black (1), at or above are
+/// white (0). Shared by all renderers that convert luma8 to 1-bit.
+pub const BLACK_THRESHOLD: u8 = 128;
 
 /// Collected resource URLs referenced by a document.
 ///

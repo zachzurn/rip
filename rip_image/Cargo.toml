@@ -10,8 +10,6 @@ authors = ["Zach Zurn"]
 [dependencies]
 rip_parser = { path = "../rip_parser" }
 fontdue = "0.9"
-qrcode = "0.14"
-barcoders = "2.0"
 taffy = "0.9"
 
 [dev-dependencies]
