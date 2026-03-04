@@ -2,7 +2,7 @@
 
 A markup language for receipts. Parse it, render it to pixels, HTML, plain text, or ESC/POS binary.
 
-Jump to: [Syntax](#syntax) · [Cli Quick Start](#cli-quick-start) · [Rust Quick Start](#rust-quick-start) 
+Jump to: [Syntax](#syntax) · [JavaScript Quick Start](#javascript-quick-start) · [CLI Quick Start](#cli-quick-start) · [Rust Quick Start](#rust-quick-start)
 
 ```
 #### BURGER BARN ####
@@ -32,6 +32,33 @@ See [SPEC.md](SPEC.md) for the full language reference. The short version:
 - **Columns**: `| left | right |` with `>` / `<` for alignment
 - **Dividers**: `---` thin, `===` thick, `...` dotted
 - **Directives**: `@image()` `@qr()` `@barcode()` `@cut()` `@feed()` `@drawer()` `@style()` `@printer-width()` `@printer-dpi()`
+
+## JavaScript Quick Start
+
+```bash
+npm install rip-receipt
+```
+
+```javascript
+import { Rip } from 'rip-receipt';
+
+// HTML — standalone document with inline styles and SVG barcodes/QR
+const html = await Rip.renderHtml("## Hello\n---\n| Item |> $5.00 |");
+
+// Plain text
+const text = await Rip.renderText("## Hello\n---\n| Item |> $5.00 |");
+
+// Grayscale pixels — { width, height, pixels: Uint8Array, dirtyRows }
+const img = await Rip.renderPixels(markup);
+
+// 1-bit packed pixels (for thermal printers)
+const raster = await Rip.renderRaster(markup);
+
+// ESC/POS binary commands
+const escpos = await Rip.renderEscpos(markup);
+```
+
+Images and fonts referenced in markup are fetched automatically. In Node.js, install `sharp` as an optional dependency for image decoding.
 
 ## CLI Quick Start
 
@@ -77,6 +104,7 @@ let escpos = rip::render_escpos(&nodes, &resources);
 | `rip_text` | Renders to plain text |
 | `rip_escpos` | Renders to ESC/POS binary |
 | `rip_cli` | CLI tool for rendering files |
+| `rip_wasm` | WASM + JS wrapper → npm [`rip-receipt`](https://www.npmjs.com/package/rip-receipt) |
 
 ## How images work
 

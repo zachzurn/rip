@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rip — Browser Demo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: #000;
+      color: #999;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    header h1 {
+      font-size: 14px;
+      font-weight: 500;
+      color: #fff;
+      letter-spacing: 0.5px;
+    }
+    .tabs {
+      display: flex;
+      gap: 2px;
+    }
+    .tabs button {
+      background: transparent;
+      border: 1px solid #333;
+      color: #666;
+      font-size: 11px;
+      font-family: inherit;
+      padding: 4px 14px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .tabs button:first-child { border-radius: 4px 0 0 4px; }
+    .tabs button:last-child { border-radius: 0 4px 4px 0; }
+    .tabs button:hover { color: #aaa; border-color: #555; }
+    .tabs button.active {
+      background: #fff;
+      color: #000;
+      border-color: #fff;
+    }
+    main {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+    }
+    .editor-pane {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #1a1a1a;
+    }
+    .preview-pane {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    textarea {
+      flex: 1;
+      padding: 20px;
+      font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+      font-size: 13px;
+      line-height: 1.7;
+      background: #000;
+      color: #ccc;
+      border: none;
+      resize: none;
+      outline: none;
+      tab-size: 2;
+    }
+    textarea::selection { background: #333; }
+    .preview-content {
+      flex: 1;
+      overflow: auto;
+      display: flex;
+      justify-content: center;
+      padding: 32px;
+      background: #050505;
+    }
+    .receipt-frame {
+      background: #fff;
+      color: #000;
+      padding: 0;
+      max-width: 400px;
+      width: 100%;
+      align-self: flex-start;
+    }
+    .receipt-frame.html-view iframe {
+      width: 100%;
+      border: none;
+      min-height: 300px;
+    }
+    .receipt-frame.text-view {
+      padding: 20px;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      white-space: pre;
+      line-height: 1.4;
+    }
+    .receipt-frame.pixel-view {
+      background: transparent;
+    }
+    .receipt-frame.pixel-view canvas {
+      display: block;
+      max-width: 100%;
+      background: #fff;
+    }
+    footer {
+      padding: 6px 24px;
+      font-size: 11px;
+      color: #444;
+      border-top: 1px solid #1a1a1a;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    }
+    footer.error { color: #c44; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>rip</h1>
+    <div class="tabs">
+      <button class="active" data-mode="html">HTML</button>
+      <button data-mode="text">Text</button>
+      <button data-mode="pixels">Pixels</button>
+    </div>
+  </header>
+  <main>
+    <div class="editor-pane">
+      <textarea id="editor" spellcheck="false">## The Coffee Shop
+123 Main Street
+
+---
+| Latte           | $5.50 |
+| Croissant       | $3.75 |
+| *Blueberry Muffin* | $4.25 |
+...
+|> Subtotal | $13.50 |
+|> Tax      |  $1.22 |
+===
+|> *Total*  | *$14.72* |
+
+@qr(https://example.com/receipt/1234, 120)
+
+## Thank you!
+Please come again</textarea>
+    </div>
+    <div class="preview-pane">
+      <div class="preview-content" id="preview">
+        <div class="receipt-frame html-view" id="receipt"></div>
+      </div>
+    </div>
+  </main>
+  <footer id="status">loading wasm…</footer>
+
+  <script type="module">
+    import { Rip } from '../pkg/rip.mjs';
+
+    const editor = document.getElementById('editor');
+    const preview = document.getElementById('receipt');
+    const status = document.getElementById('status');
+    const tabs = document.querySelectorAll('.tabs button');
+    let currentMode = 'html';
+    let debounceTimer = null;
+
+    tabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        tabs.forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        currentMode = tab.dataset.mode;
+        render();
+      });
+    });
+
+    async function render() {
+      const source = editor.value;
+      const start = performance.now();
+
+      try {
+        if (currentMode === 'html') {
+          const html = await Rip.renderHtml(source);
+          preview.className = 'receipt-frame html-view';
+          preview.innerHTML = '';
+          const iframe = document.createElement('iframe');
+          preview.appendChild(iframe);
+          iframe.srcdoc = html;
+          iframe.onload = () => {
+            iframe.style.height = iframe.contentDocument.body.scrollHeight + 'px';
+          };
+        } else if (currentMode === 'text') {
+          const text = await Rip.renderText(source);
+          preview.className = 'receipt-frame text-view';
+          preview.textContent = text;
+        } else if (currentMode === 'pixels') {
+          const { width, height, pixels } = await Rip.renderPixels(source);
+          preview.className = 'receipt-frame pixel-view';
+          preview.innerHTML = '';
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          const imageData = ctx.createImageData(width, height);
+          for (let i = 0; i < pixels.length; i++) {
+            const j = i * 4;
+            imageData.data[j] = pixels[i];
+            imageData.data[j + 1] = pixels[i];
+            imageData.data[j + 2] = pixels[i];
+            imageData.data[j + 3] = 255;
+          }
+          ctx.putImageData(imageData, 0, 0);
+          preview.appendChild(canvas);
+        }
+
+        const elapsed = (performance.now() - start).toFixed(1);
+        status.className = '';
+        status.textContent = `rendered in ${elapsed}ms`;
+      } catch (e) {
+        status.className = 'error';
+        status.textContent = `error: ${e.message || e}`;
+      }
+    }
+
+    editor.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(render, 150);
+    });
+
+    render();
+  </script>
+</body>
+</html>

@@ -7,5 +7,6 @@ members = [
     "rip_escpos",
     "rip",
     "rip_cli",
+    "rip_wasm",
 ]
 resolver = "2"

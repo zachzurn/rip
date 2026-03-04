@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "browser-demo",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["rip_wasm/browser_demo/serve.mjs"],
+      "port": 3333
+    },
+    {
+      "name": "node-demo",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["rip_wasm/node_demo/serve.mjs"],
+      "port": 3334
+    }
+  ]
+}
