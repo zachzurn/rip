@@ -1,16 +1,16 @@
 /**
- * rip-js — Rip receipt markup rendered via WASM.
+ * rip-receipt — Rip receipt markup rendered via WASM.
  *
  * All methods are static and async. WASM is lazy-initialized on first call.
  * Resources (images, fonts) referenced in markup are fetched automatically.
  *
  * @example
- * import { Rip } from 'rip-js';
+ * import { Rip } from 'rip-receipt';
+ *
+ * Rip.configure({ basePath: '/assets/', cachePath: './.rip-cache' });
  *
  * const html   = await Rip.renderHtml(markup);
- * const text   = await Rip.renderText(markup);
  * const pixels = await Rip.renderPixels(markup);
- * const escpos = await Rip.renderEscpos(markup);
  */
 
 import wasmInit, * as wasm from './rip_wasm.js';
@@ -27,7 +27,6 @@ function ensureInit() {
   if (!initPromise) {
     initPromise = (async () => {
       if (isNode) {
-        // Node.js: read the .wasm file from disk and pass bytes to init
         const { readFile } = await import('node:fs/promises');
         const { fileURLToPath } = await import('node:url');
         const { dirname, join } = await import('node:path');
@@ -35,7 +34,6 @@ function ensureInit() {
         const bytes = await readFile(join(dir, 'rip_wasm_bg.wasm'));
         await wasmInit({ module_or_path: bytes });
       } else {
-        // Browser: default init fetches .wasm relative to import.meta.url
         await wasmInit();
       }
       initDone = true;
@@ -44,46 +42,131 @@ function ensureInit() {
   return initPromise;
 }
 
+// ─── Configuration ──────────────────────────────────────────────────
+
+let config = {
+  basePath: '',
+  cachePath: '',
+};
+
+// In-memory cache: resolved URL → decoded resource
+const memCache = new Map();
+
 // ─── Resource loading ───────────────────────────────────────────────
 
 /**
- * Load raw bytes from a URL or local file path.
- *
- * - HTTP/HTTPS URLs → fetch() (works in browser + Node 18+)
- * - Browser relative paths → fetch() (resolves against page origin)
- * - Node.js local paths → fs.readFile()
+ * Resolve a resource path against the configured basePath.
  */
-async function loadBytes(urlOrPath) {
+function resolveUrl(urlOrPath) {
+  // Already absolute URL — don't modify
+  if (/^https?:\/\//i.test(urlOrPath)) return urlOrPath;
+  // Has a basePath — prepend it
+  if (config.basePath) {
+    const base = config.basePath.endsWith('/') ? config.basePath : config.basePath + '/';
+    return base + urlOrPath;
+  }
+  return urlOrPath;
+}
+
+/**
+ * Get the disk cache file path for a URL (Node.js only).
+ * Returns null if cachePath is not configured.
+ */
+function diskCacheKey(url) {
+  if (!config.cachePath || !isNode) return null;
+  // Simple hash: replace non-alphanumeric chars with underscores
+  const safe = url.replace(/[^a-zA-Z0-9._-]/g, '_');
+  return null; // placeholder, will be set after imports
+}
+
+let _pathJoin = null;
+let _fsp = null;
+
+async function ensureNodeImports() {
+  if (_fsp) return;
+  _fsp = await import('node:fs/promises');
+  const path = await import('node:path');
+  _pathJoin = path.join;
+}
+
+async function diskCachePath(url) {
+  if (!config.cachePath || !isNode) return null;
+  await ensureNodeImports();
+  const safe = url.replace(/[^a-zA-Z0-9._-]/g, '_');
+  return _pathJoin(config.cachePath, safe);
+}
+
+/**
+ * Try reading from disk cache. Returns Uint8Array or null.
+ */
+async function readDiskCache(url) {
+  const path = await diskCachePath(url);
+  if (!path) return null;
+  try {
+    const buf = await _fsp.readFile(path);
+    return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write bytes to disk cache.
+ */
+async function writeDiskCache(url, bytes) {
+  const path = await diskCachePath(url);
+  if (!path) return;
+  try {
+    await _fsp.mkdir(config.cachePath, { recursive: true });
+    await _fsp.writeFile(path, bytes);
+  } catch {
+    // Silently ignore cache write failures
+  }
+}
+
+/**
+ * Load raw bytes from a URL or local file path.
+ */
+async function loadBytes(resolvedUrl) {
   // Node.js + local path → read from filesystem
-  if (isNode && !/^https?:\/\//i.test(urlOrPath)) {
-    const { readFile } = await import('node:fs/promises');
-    const buf = await readFile(urlOrPath);
+  if (isNode && !/^https?:\/\//i.test(resolvedUrl)) {
+    await ensureNodeImports();
+    const buf = await _fsp.readFile(resolvedUrl);
     return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
   }
-  // Everything else → fetch (handles relative URLs in browser)
-  const res = await fetch(urlOrPath);
+  // Everything else → fetch
+  const res = await fetch(resolvedUrl);
   if (!res.ok) {
-    throw new Error(`Failed to fetch ${urlOrPath}: ${res.status} ${res.statusText}`);
+    throw new Error(`Failed to fetch ${resolvedUrl}: ${res.status} ${res.statusText}`);
   }
   return new Uint8Array(await res.arrayBuffer());
 }
 
 /**
+ * Load bytes with disk cache support.
+ */
+async function loadBytesWithCache(resolvedUrl) {
+  // Try disk cache first
+  const cached = await readDiskCache(resolvedUrl);
+  if (cached) return cached;
+  // Fetch
+  const bytes = await loadBytes(resolvedUrl);
+  // Write to disk cache
+  await writeDiskCache(resolvedUrl, bytes);
+  return bytes;
+}
+
+/**
  * Decode raw image bytes to luma8 grayscale.
- *
- * - Browser: createImageBitmap + OffscreenCanvas (zero deps)
- * - Node.js: sharp (must be installed: npm install sharp)
  */
 async function decodeImage(bytes) {
   if (!isNode) {
-    // Browser: native image decoding
     const blob = new Blob([bytes]);
     const bitmap = await createImageBitmap(blob);
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
     const ctx = canvas.getContext('2d');
     ctx.drawImage(bitmap, 0, 0);
     const { data } = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
-    // RGBA → luma8 (ITU-R BT.601 luminance)
     const pixels = new Uint8Array(bitmap.width * bitmap.height);
     for (let i = 0; i < pixels.length; i++) {
       const j = i * 4;
@@ -93,7 +176,6 @@ async function decodeImage(bytes) {
     return { width: bitmap.width, height: bitmap.height, pixels };
   }
 
-  // Node.js: use sharp for image decoding
   try {
     const sharp = (await import('sharp')).default;
     const { data, info } = await sharp(Buffer.from(bytes))
@@ -117,9 +199,6 @@ async function decodeImage(bytes) {
 
 /**
  * Parse markup, discover resource URLs, fetch and decode them.
- *
- * Returns a resources object ready for the Rust render functions:
- * { images: { url: { width, height, pixels } }, fonts: { url: Uint8Array } }
  */
 async function loadResources(source) {
   const { fonts, images } = wasm.get_resources(source);
@@ -127,11 +206,26 @@ async function loadResources(source) {
 
   await Promise.all([
     ...images.map(async (url) => {
-      const bytes = await loadBytes(url);
-      resources.images[url] = await decodeImage(bytes);
+      const resolved = resolveUrl(url);
+      // Check in-memory cache
+      if (memCache.has(resolved)) {
+        resources.images[url] = memCache.get(resolved);
+        return;
+      }
+      const bytes = await loadBytesWithCache(resolved);
+      const decoded = await decodeImage(bytes);
+      memCache.set(resolved, decoded);
+      resources.images[url] = decoded;
     }),
     ...fonts.map(async (url) => {
-      resources.fonts[url] = await loadBytes(url);
+      const resolved = resolveUrl(url);
+      if (memCache.has(resolved)) {
+        resources.fonts[url] = memCache.get(resolved);
+        return;
+      }
+      const bytes = await loadBytesWithCache(resolved);
+      memCache.set(resolved, bytes);
+      resources.fonts[url] = bytes;
     }),
   ]);
 
@@ -149,6 +243,25 @@ function needsResources(source) {
 // ─── Public API ─────────────────────────────────────────────────────
 
 export class Rip {
+  /**
+   * Set global options for resource loading.
+   *
+   * @param {object} options
+   * @param {string} [options.basePath] - Base path for resolving relative resource URLs.
+   * @param {string} [options.cachePath] - Directory for disk caching fetched resources (Node.js only).
+   */
+  static configure(options = {}) {
+    if (options.basePath !== undefined) config.basePath = options.basePath;
+    if (options.cachePath !== undefined) config.cachePath = options.cachePath;
+  }
+
+  /**
+   * Clear the in-memory resource cache.
+   */
+  static clearCache() {
+    memCache.clear();
+  }
+
   /**
    * Render markup to a standalone HTML document.
    * @param {string} source - Rip markup

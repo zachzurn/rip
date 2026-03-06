@@ -1,0 +1,16 @@
+[package]
+name = "rip_android"
+version = "0.1.0"
+edition = "2021"
+description = "Android JNI bindings for Rip receipt markup rendering"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zachzurn/rip"
+authors = ["Zach Zurn"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rip = { path = "../rip" }
+rip_parser = { path = "../rip_parser" }
+jni = "0.21"

@@ -105,6 +105,7 @@ let escpos = rip::render_escpos(&nodes, &resources);
 | `rip_escpos` | Renders to ESC/POS binary |
 | `rip_cli` | CLI tool for rendering files |
 | `rip_wasm` | WASM + JS wrapper → npm [`rip-receipt`](https://www.npmjs.com/package/rip-receipt) |
+| `rip_android` | Android/Kotlin bindings via JNI |
 
 ## How images work
 

@@ -8,5 +8,6 @@ members = [
     "rip",
     "rip_cli",
     "rip_wasm",
+    "rip_android",
 ]
 resolver = "2"

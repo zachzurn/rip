@@ -1,4 +1,14 @@
 /**
+ * Configuration options for resource loading.
+ */
+export interface RipOptions {
+  /** Base path for resolving relative resource URLs (e.g. '/assets/' or 'https://cdn.example.com/'). */
+  basePath?: string;
+  /** Directory for disk caching fetched resources (Node.js only). */
+  cachePath?: string;
+}
+
+/**
  * Pixel output from image rendering.
  */
 export interface PixelOutput {
@@ -25,12 +35,23 @@ export interface PixelOutput {
  *
  * @example
  * ```typescript
- * import { Rip } from 'rip-js';
+ * import { Rip } from 'rip-receipt';
  *
+ * Rip.configure({ basePath: '/assets/', cachePath: './.rip-cache' });
  * const html = await Rip.renderHtml("## Hello\n---\nItem | $5.00");
  * ```
  */
 export class Rip {
+  /**
+   * Set global options for resource loading.
+   */
+  static configure(options: RipOptions): void;
+
+  /**
+   * Clear the in-memory resource cache.
+   */
+  static clearCache(): void;
+
   /**
    * Render markup to a standalone HTML document.
    *
