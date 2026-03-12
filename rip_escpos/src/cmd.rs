@@ -57,6 +57,13 @@ pub fn feed(buf: &mut Vec<u8>, lines: u8) {
     buf.extend_from_slice(&[ESC, b'd', lines]);
 }
 
+/// ESC J n — Print and feed paper n dots (0–255).
+///
+/// Used for sub-line-height vertical spacing.
+pub fn feed_dots(buf: &mut Vec<u8>, dots: u8) {
+    buf.extend_from_slice(&[ESC, b'J', dots]);
+}
+
 /// GS V m n — Paper cut (Function B).
 ///   m = 65 (full cut) or 66 (partial cut), n = 0.
 ///   Function B auto-feeds to the cutter position before cutting,

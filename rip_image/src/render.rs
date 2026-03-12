@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use fontdue::Font;
 use rip_parser::ast::*;
-use rip_parser::{ImageData, RenderResources};
+use rip_parser::text_util;
+use rip_resources::{ImageData, RenderResources};
 
 use crate::barcode;
 use crate::canvas::Canvas;
@@ -10,11 +11,14 @@ use crate::layout;
 use crate::text;
 use crate::RenderError;
 
-/// Default body font (JetBrains Mono Medium, OFL-licensed).
-const DEFAULT_FONT: &[u8] = include_bytes!("../assets/jetbrains_mono_medium.ttf");
+/// Default body font (Inter Medium, OFL-licensed).
+const DEFAULT_FONT: &[u8] = include_bytes!("../assets/inter_medium.ttf");
 
-/// Default title font (Hubot Sans Bold, OFL-licensed).
-const DEFAULT_TITLE_FONT: &[u8] = include_bytes!("../assets/hubot_sans_bold.ttf");
+/// Default bold body font (Inter Bold, OFL-licensed).
+const DEFAULT_BOLD_FONT: &[u8] = include_bytes!("../assets/inter_bold.ttf");
+
+/// Default title font (Inter Display Bold, OFL-licensed).
+const DEFAULT_TITLE_FONT: &[u8] = include_bytes!("../assets/inter_display_bold.ttf");
 
 /// Per-size font configuration collected from @style directives.
 struct FontStyle {
@@ -30,6 +34,8 @@ pub struct RenderContext<'a> {
     font_cache: text::FontCache,
     /// Maps Size level → (font URL, pixel size).
     size_map: HashMap<Size, (String, f32)>,
+    /// Maps Size level → (bold font URL, pixel size) for real bold rendering.
+    bold_size_map: HashMap<Size, (String, f32)>,
     /// Vertical padding in pixels around dividers, images, etc.
     padding: u32,
 }
@@ -40,6 +46,9 @@ impl<'a> RenderContext<'a> {
         let base_size_pt = 12.0;
         let mut dpi: f64 = 203.0;
         let mut styles: HashMap<Size, FontStyle> = HashMap::new();
+        let mut bold_styles: HashMap<Size, FontStyle> = HashMap::new();
+        // Track which levels had an explicit regular @style (to clear default bold pairing)
+        let mut explicit_regular: HashSet<Size> = HashSet::new();
 
         // Pass 1: collect config
         for node in nodes {
@@ -54,14 +63,28 @@ impl<'a> RenderContext<'a> {
                     level,
                     font,
                     points,
+                    bold,
                 } => {
-                    styles.insert(
-                        *level,
-                        FontStyle {
-                            url: font.clone(),
-                            points: *points,
-                        },
-                    );
+                    if *bold {
+                        bold_styles.insert(
+                            *level,
+                            FontStyle {
+                                url: font.clone(),
+                                points: *points,
+                            },
+                        );
+                    } else {
+                        styles.insert(
+                            *level,
+                            FontStyle {
+                                url: font.clone(),
+                                points: *points,
+                            },
+                        );
+                        explicit_regular.insert(*level);
+                        // Setting a regular style clears the bold pairing
+                        bold_styles.remove(level);
+                    }
                 }
                 _ => {}
             }
@@ -72,13 +95,13 @@ impl<'a> RenderContext<'a> {
 
         let mut font_cache = text::FontCache::new();
         let mut size_map = HashMap::new();
+        let mut bold_size_map = HashMap::new();
 
         // Resolve fonts for each defined style level
         for (level, style) in &styles {
             let url = &style.url;
             let px = layout::font_pt_to_px(style.points, dpi);
 
-            // Try to load the font from the resource map
             if font_cache.get(url).is_none() {
                 if let Some(bytes) = resources.fonts.get(url.as_str()) {
                     font_cache.load(url, bytes);
@@ -87,12 +110,25 @@ impl<'a> RenderContext<'a> {
             size_map.insert(*level, (url.clone(), px));
         }
 
+        // Resolve bold fonts
+        for (level, style) in &bold_styles {
+            let url = &style.url;
+            let px = layout::font_pt_to_px(style.points, dpi);
+
+            if font_cache.get(url).is_none() {
+                if let Some(bytes) = resources.fonts.get(url.as_str()) {
+                    font_cache.load(url, bytes);
+                }
+            }
+            bold_size_map.insert(*level, (url.clone(), px));
+        }
+
         // Always load the built-in default fonts (embedded in binary)
         font_cache.load("default", DEFAULT_FONT);
+        font_cache.load("default-bold", DEFAULT_BOLD_FONT);
         font_cache.load("default-title", DEFAULT_TITLE_FONT);
 
         // Populate default size entries for any levels not explicitly styled.
-        // Body sizes use the default body font, title sizes use the default title font.
         let default_sizes: [(Size, &str, f64); 6] = [
             (Size::Text,   "default",       base_size_pt),
             (Size::TextM,  "default",       base_size_pt * 1.33),
@@ -107,12 +143,26 @@ impl<'a> RenderContext<'a> {
             }
         }
 
+        // Populate default bold entries for body sizes (not titles) unless
+        // the user set a custom regular style without a matching bold.
+        let default_bold_sizes: [(Size, f64); 3] = [
+            (Size::Text,  base_size_pt),
+            (Size::TextM, base_size_pt * 1.33),
+            (Size::TextL, base_size_pt * 1.67),
+        ];
+        for (level, pt) in default_bold_sizes {
+            if !bold_size_map.contains_key(&level) && !explicit_regular.contains(&level) {
+                bold_size_map.insert(level, ("default-bold".to_string(), layout::font_pt_to_px(pt, dpi)));
+            }
+        }
+
         Self {
             images: &resources.images,
             dpi,
             paper_width_px,
             font_cache,
             size_map,
+            bold_size_map,
             padding,
         }
     }
@@ -155,6 +205,18 @@ impl<'a> RenderContext<'a> {
         None
     }
 
+    /// Get the bold font for a given Size level, if one is configured.
+    ///
+    /// Returns `None` if no bold font is available (caller should faux-bold).
+    fn resolve_bold_font(&self, size: Size) -> Option<(&Font, f32)> {
+        if let Some((url, px)) = self.bold_size_map.get(&size) {
+            if let Some(font) = self.font_cache.get(url) {
+                return Some((font, *px));
+            }
+        }
+        None
+    }
+
     /// Get the default line height (for Blank nodes, etc.)
     fn default_line_height(&self) -> u32 {
         self.resolve_font(Size::Text)
@@ -167,56 +229,70 @@ impl<'a> RenderContext<'a> {
     fn collect_chars(&self, nodes: &[Node]) -> HashSet<(char, *const Font, u32)> {
         let mut chars = HashSet::new();
         for node in nodes {
-            match node {
-                Node::Text { spans, size } => {
-                    if let Some((font, px)) = self.resolve_font(*size) {
-                        let ptr = font as *const Font;
-                        let bits = px.to_bits();
-                        for span in spans {
-                            for ch in span.text.chars() {
-                                chars.insert((ch, ptr, bits));
-                            }
-                        }
-                    }
-                }
+            let (spans_list, size) = match node {
+                Node::Text { spans, size } => (vec![spans.as_slice()], *size),
                 Node::Columns { cells, size } => {
-                    if let Some((font, px)) = self.resolve_font(*size) {
-                        let ptr = font as *const Font;
-                        let bits = px.to_bits();
-                        for cell in cells {
-                            if let CellContent::Spans(spans) = &cell.content {
-                                for span in spans {
-                                    for ch in span.text.chars() {
-                                        chars.insert((ch, ptr, bits));
-                                    }
+                    let sl: Vec<&[Span]> = cells.iter().filter_map(|c| {
+                        if let CellContent::Spans(spans) = &c.content { Some(spans.as_slice()) } else { None }
+                    }).collect();
+                    (sl, *size)
+                }
+                _ => continue,
+            };
+
+            if let Some((font, px)) = self.resolve_font(size) {
+                let ptr = font as *const Font;
+                let bits = px.to_bits();
+                let bold_info = self.resolve_bold_font(size);
+
+                for spans in &spans_list {
+                    for span in *spans {
+                        for ch in span.text.chars() {
+                            chars.insert((ch, ptr, bits));
+                            // Also collect with bold font for bold spans
+                            if span.style == SpanStyle::Bold {
+                                if let Some((bf, bpx)) = bold_info {
+                                    chars.insert((ch, bf as *const Font, bpx.to_bits()));
                                 }
                             }
                         }
                     }
                 }
-                _ => {}
             }
         }
         chars
     }
 
     /// Measure the pixel height of a single node.
-    fn measure_node(&self, node: &Node) -> u32 {
+    fn measure_node(
+        &self,
+        node: &Node,
+        node_idx: usize,
+        col_cache: &HashMap<usize, Vec<(f64, f64)>>,
+    ) -> u32 {
         match node {
             Node::Text { spans, size } => {
                 self.resolve_font(*size)
                     .map(|(font, px)| {
                         let lh = text::line_height(font, px);
                         let avail = self.paper_width_px as f32;
-                        let num_lines = text::count_lines_wrapped(spans, font, px, avail);
+                        let bold = self.resolve_bold_font(*size);
+                        let num_lines = text::count_lines_wrapped(spans, font, px, avail, bold);
                         (lh * num_lines as f32).ceil() as u32
                     })
                     .unwrap_or(self.default_line_height())
             }
 
-            Node::Columns { size, .. } => self
+            Node::Columns { cells, size } => self
                 .resolve_font(*size)
-                .map(|(font, px)| text::line_height(font, px).ceil() as u32)
+                .map(|(font, px)| {
+                    let cols = col_cache.get(&node_idx)
+                        .map(|v| v.as_slice())
+                        .unwrap_or(&[]);
+                    let bold = self.resolve_bold_font(*size);
+                    let col = layout::column_layout_wrapped(cols, cells, font, px, bold);
+                    col.row_height.max(text::line_height(font, px).ceil() as u32)
+                })
                 .unwrap_or(self.default_line_height()),
 
             Node::Line { style } => {
@@ -250,7 +326,10 @@ impl<'a> RenderContext<'a> {
                 barcode_h + self.padding * 2
             }
 
-            Node::Feed { lines } => self.default_line_height() * lines,
+            Node::Feed { amount, unit } => match unit {
+                FeedUnit::Lines => (*amount as f64 * self.default_line_height() as f64).round() as u32,
+                FeedUnit::Mm => layout::mm_to_px(*amount, self.dpi),
+            },
 
             // Non-visual nodes
             Node::PrinterWidth { .. } | Node::PrinterDpi { .. }
@@ -301,10 +380,72 @@ impl<'a> RenderContext<'a> {
         Some((img.width, img.height))
     }
 
+    /// Compute the inter-column gap in pixels (2 space characters at default text size).
+    fn column_gap_px(&self) -> f64 {
+        self.resolve_font(Size::Text)
+            .map(|(font, px)| text::measure_text(font, px, "  ") as f64)
+            .unwrap_or(10.0)
+    }
+
+    /// Compute the minimum column width in pixels (one wide character).
+    fn min_column_px(&self) -> f64 {
+        self.resolve_font(Size::Text)
+            .map(|(font, px)| text::measure_text(font, px, "W") as f64)
+            .unwrap_or(8.0)
+    }
+
+    /// Pre-compute column widths for all column groups.
+    ///
+    /// Returns a map from node index to pre-computed `(x, width)` pairs.
+    /// Both `measure_node` and `render_node` use these for consistency.
+    fn build_column_cache(&self, nodes: &[Node]) -> HashMap<usize, Vec<(f64, f64)>> {
+        let groups = text_util::identify_column_groups(nodes);
+        let gap = self.column_gap_px();
+        let min_col = self.min_column_px();
+        let mut cache = HashMap::new();
+
+        for group in &groups {
+            let pcts = text_util::group_width_pcts(nodes, &group);
+
+            // Find max natural pixel width per column across the group
+            let mut max_natural = vec![0.0f64; group.col_count];
+            for idx in group.start..group.end {
+                if let Node::Columns { cells, size } = &nodes[idx] {
+                    if let Some((font, px)) = self.resolve_font(*size) {
+                        let bold = self.resolve_bold_font(*size);
+                        for (col, cell) in cells.iter().enumerate() {
+                            if col < max_natural.len() {
+                                if let CellContent::Spans(spans) = &cell.content {
+                                    let w = text::measure_spans(spans, font, px, bold) as f64;
+                                    max_natural[col] = max_natural[col].max(w);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let cols = text_util::column_widths(
+                &pcts, &max_natural, self.paper_width_px as f64, gap, min_col,
+            );
+
+            for idx in group.start..group.end {
+                cache.insert(idx, cols.clone());
+            }
+        }
+
+        cache
+    }
+
     /// Render all nodes and return (width, height, pixels, dirty_rows).
     pub fn render(&self, nodes: &[Node]) -> Result<(u32, u32, Vec<u8>, Vec<bool>), RenderError> {
+        // Pre-compute column widths for all groups
+        let col_cache = self.build_column_cache(nodes);
+
         // Pre-compute heights once
-        let heights: Vec<u32> = nodes.iter().map(|n| self.measure_node(n)).collect();
+        let heights: Vec<u32> = nodes.iter().enumerate()
+            .map(|(i, n)| self.measure_node(n, i, &col_cache))
+            .collect();
         let total_height: u32 = heights.iter().sum();
         if total_height == 0 {
             return Err(RenderError::EmptyDocument);
@@ -317,11 +458,11 @@ impl<'a> RenderContext<'a> {
         let mut canvas = Canvas::new(self.paper_width_px, total_height, 255, 0);
         let mut y_cursor = 0u32;
 
-        for (node, &height) in nodes.iter().zip(heights.iter()) {
+        for (i, (node, &height)) in nodes.iter().zip(heights.iter()).enumerate() {
             if height == 0 {
                 continue;
             }
-            self.render_node(node, &mut canvas, &mut y_cursor, &glyph_cache);
+            self.render_node(node, i, &col_cache, &mut canvas, &mut y_cursor, &glyph_cache);
         }
 
         Ok((canvas.width, canvas.height, canvas.pixels, canvas.dirty_rows))
@@ -331,6 +472,8 @@ impl<'a> RenderContext<'a> {
     fn render_node(
         &self,
         node: &Node,
+        node_idx: usize,
+        col_cache: &HashMap<usize, Vec<(f64, f64)>>,
         canvas: &mut Canvas,
         y: &mut u32,
         glyph_cache: &text::GlyphCache,
@@ -339,7 +482,12 @@ impl<'a> RenderContext<'a> {
             Node::Text { spans, size } => {
                 if let Some((font, px)) = self.resolve_font(*size) {
                     let avail = self.paper_width_px as f32;
-                    let is_title = matches!(size, Size::Title | Size::TitleM | Size::TitleL);
+                    let align = if matches!(size, Size::Title | Size::TitleM | Size::TitleL) {
+                        Align::Center
+                    } else {
+                        Align::Left
+                    };
+                    let bold = self.resolve_bold_font(*size);
 
                     let height = text::render_spans_wrapped(
                         canvas,
@@ -349,7 +497,8 @@ impl<'a> RenderContext<'a> {
                         font,
                         px,
                         avail,
-                        is_title,
+                        align,
+                        bold,
                         glyph_cache,
                     );
                     *y += height;
@@ -358,26 +507,32 @@ impl<'a> RenderContext<'a> {
 
             Node::Columns { cells, size } => {
                 if let Some((font, px)) = self.resolve_font(*size) {
-                    let cols = layout::column_layout(self.paper_width_px, cells.len());
-                    let row_height = text::line_height(font, px).ceil() as u32;
+                    let cols = col_cache.get(&node_idx)
+                        .map(|v| v.as_slice())
+                        .unwrap_or(&[]);
+                    let bold = self.resolve_bold_font(*size);
+                    let col_layout = layout::column_layout_wrapped(cols, cells, font, px, bold);
+                    let row_height = col_layout.row_height
+                        .max(text::line_height(font, px).ceil() as u32);
 
                     for (i, cell) in cells.iter().enumerate() {
-                        if i >= cols.len() {
+                        if i >= col_layout.cells.len() {
                             break;
                         }
-                        let (col_x, col_w) = cols[i];
+                        let cl = &col_layout.cells[i];
 
                         match &cell.content {
                             CellContent::Spans(spans) => {
-                                let text_w = text::measure_spans(spans, font, px) as u32;
-                                let offset = layout::align_offset(col_w, text_w, cell.align);
-                                text::render_spans(
+                                text::render_spans_wrapped(
                                     canvas,
                                     spans,
-                                    (col_x + offset) as f32,
+                                    cl.x as f32,
                                     *y as f32,
                                     font,
                                     px,
+                                    cl.width as f32,
+                                    cell.align,
+                                    bold,
                                     glyph_cache,
                                 );
                             }
@@ -387,21 +542,21 @@ impl<'a> RenderContext<'a> {
                                 match line_style {
                                     LineStyle::Thin => {
                                         canvas.draw_hline(
-                                            col_x, div_y, col_w, 2, canvas.foreground,
+                                            cl.x, div_y, cl.width, 2, canvas.foreground,
                                         );
                                     }
                                     LineStyle::Thick => {
                                         canvas.draw_hline(
-                                            col_x,
+                                            cl.x,
                                             div_y.saturating_sub(3),
-                                            col_w,
+                                            cl.width,
                                             4,
                                             canvas.foreground,
                                         );
                                     }
                                     LineStyle::Dotted => {
                                         canvas.draw_dotted_hline(
-                                            col_x, div_y, col_w, 3, canvas.foreground,
+                                            cl.x, div_y, cl.width, 3, canvas.foreground,
                                         );
                                     }
                                 }
@@ -443,6 +598,7 @@ impl<'a> RenderContext<'a> {
                 width,
                 height,
                 align,
+                ..
             } => {
                 *y += self.padding;
 
@@ -518,8 +674,11 @@ impl<'a> RenderContext<'a> {
                 *y += self.padding;
             }
 
-            Node::Feed { lines } => {
-                *y += self.default_line_height() * lines;
+            Node::Feed { amount, unit } => {
+                *y += match unit {
+                    FeedUnit::Lines => (*amount as f64 * self.default_line_height() as f64).round() as u32,
+                    FeedUnit::Mm => layout::mm_to_px(*amount, self.dpi),
+                };
             }
 
             // Non-visual nodes

@@ -2,7 +2,7 @@
 @printer-width(80mm)
 
 // ─── Store Header ───
-|> @image(resources/receipt.png, 125) <|
+|> @logo(resources/receipt.png, 125) <|
 #### BURGER BARN ####
 |> 742 Evergreen Terrace <|
 |> Springfield, IL 62704 <|
@@ -45,6 +45,6 @@
 |> Thank you for dining with us! <|
 |> *See you soon!* <|
 
-@feed(2)
+@feed(6)
 @cut()
 @drawer()

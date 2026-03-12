@@ -58,6 +58,17 @@ pub enum CellContent {
 pub struct Cell {
     pub content: CellContent,
     pub align: Align,
+    /// Explicit column width as a percentage (1–100). `None` means auto (equal share).
+    pub width_pct: Option<u32>,
+}
+
+/// Unit for `@feed` distance.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FeedUnit {
+    /// Multiplier of line height (e.g. 2.0 = two lines, 0.5 = half line).
+    Lines,
+    /// Absolute distance in millimeters.
+    Mm,
 }
 
 /// Divider line style.
@@ -106,18 +117,25 @@ pub enum Node {
     PrinterThreshold { threshold: u8 },
 
     /// `@style(level, font, points)` — font and size assignment.
+    ///
+    /// Use `-bold` suffix on level (e.g. `text-bold`) to define the bold variant.
     Style {
         level: Size,
         font: String,
         points: f64,
+        bold: bool,
     },
 
-    /// `@image(url, width?, height?)` — inline image.
+    /// `@image(url, width?, height?)` — inline image (dithered for photos).
+    /// `@logo(url, width?, height?)` — inline image (threshold for crisp logos).
     Image {
         url: String,
         width: Option<f64>,
         height: Option<f64>,
         align: Option<Align>,
+        /// When `true`, apply Floyd-Steinberg dithering (photos).
+        /// When `false`, apply simple threshold (logos/icons).
+        dither: bool,
     },
 
     /// `@qr(data, size?)` — QR code.
@@ -138,9 +156,13 @@ pub enum Node {
         partial: bool,
     },
 
-    /// `@feed(n)` — feed N blank lines.
+    /// `@feed(n)` — vertical space.
+    ///
+    /// Integer/fractional values are line-height multiples (`@feed(2)`, `@feed(.5)`, `@feed(1/2)`).
+    /// Values with units are absolute distances (`@feed(1mm)`, `@feed(.5in)`).
     Feed {
-        lines: u32,
+        amount: f64,
+        unit: FeedUnit,
     },
 
     /// `@drawer()` — open cash drawer.

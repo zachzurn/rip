@@ -8,7 +8,7 @@
 ===============================
 
 Order #1042          02/25/2026
-Cashier: Homer S       12:34 PM
+Cashier: Homer S.      12:34 PM
 
 -------------------------------
 
@@ -36,6 +36,10 @@ Adjusted Total           $22.74
 
  Thank you for dining with us!
          See you soon!
+
+
+
+
 
 
 

@@ -5,7 +5,8 @@ pub mod render;
 pub mod text;
 
 use rip_parser::ast::Node;
-use rip_parser::{RenderResources, BLACK_THRESHOLD};
+use rip_parser::BLACK_THRESHOLD;
+use rip_resources::RenderResources;
 
 /// Errors that can occur during rendering.
 #[derive(Debug)]
@@ -64,6 +65,39 @@ pub fn render_raster(
     let (width, height, pixels, _dirty) = ctx.render(nodes)?;
     let raster = encode_raster(width, &pixels, threshold);
     Ok((width, height, raster))
+}
+
+/// Encode luma8 pixels as a 1-bit PNG with maximum compression.
+///
+/// Pixels below `threshold` are black, at or above are white.
+/// Uses 1-bit grayscale color type for smallest possible file size.
+pub fn encode_png(width: u32, height: u32, pixels: &[u8], threshold: u8) -> Vec<u8> {
+    let w = width as usize;
+    let h = height as usize;
+    let bytes_per_row = (w + 7) / 8;
+
+    // Build 1-bit packed data: PNG convention is 0=black, 1=white (MSB first)
+    let mut packed = vec![0u8; bytes_per_row * h];
+    for y in 0..h {
+        for x in 0..w {
+            let pixel = pixels[y * w + x];
+            if pixel >= threshold {
+                packed[y * bytes_per_row + x / 8] |= 0x80 >> (x % 8);
+            }
+        }
+    }
+
+    let mut buf = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut buf, width, height);
+        encoder.set_color(png::ColorType::Grayscale);
+        encoder.set_depth(png::BitDepth::One);
+        encoder.set_compression(png::Compression::Best);
+        encoder.set_adaptive_filter(png::AdaptiveFilterType::Adaptive);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&packed).unwrap();
+    }
+    buf
 }
 
 /// Pack a grayscale pixel buffer into 1-bit raster data.

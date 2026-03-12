@@ -9,8 +9,10 @@ authors = ["Zach Zurn"]
 
 [dependencies]
 rip_parser = { path = "../rip_parser" }
+rip_resources = { path = "../rip_resources" }
 fontdue = "0.9"
-taffy = "0.9"
+png = "0.17"
 
 [dev-dependencies]
+rip_parser = { path = "../rip_parser" }
 pretty_assertions = "1"

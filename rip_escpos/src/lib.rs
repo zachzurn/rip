@@ -8,11 +8,9 @@
 mod cmd;
 
 use rip_parser::ast::*;
-use rip_parser::text_util::{align_offset, divider_char, spans_to_text, word_wrap};
-use rip_parser::{RenderResources, BLACK_THRESHOLD};
-use taffy::prelude::{
-    auto, length, AlignItems, Display, FlexDirection, TaffyMaxContent, TaffyTree,
-};
+use rip_parser::text_util::{align_offset, column_widths, divider_char, spans_to_text, word_wrap, precompute_columns_chars};
+use rip_parser::BLACK_THRESHOLD;
+use rip_resources::RenderResources;
 
 /// Map a Rip Size to ESC/POS width and height multipliers (1–8).
 fn size_multiplier(size: Size) -> (u8, u8) {
@@ -54,53 +52,6 @@ fn printable_dots(paper_width_mm: f64, dpi: f64) -> u32 {
     (printable_mm * dpi / 25.4).round().max(8.0) as u32
 }
 
-/// Compute column layout using Taffy flexbox (same settings as rip_image/rip_text).
-fn column_layout(total_width: usize, cell_count: usize) -> Vec<(usize, usize)> {
-    if cell_count == 0 {
-        return vec![];
-    }
-
-    let mut tree: TaffyTree<()> = TaffyTree::new();
-
-    let children: Vec<_> = (0..cell_count)
-        .map(|_| {
-            tree.new_leaf(taffy::style::Style {
-                flex_grow: 1.0,
-                flex_shrink: 0.0,
-                flex_basis: length(0.0),
-                ..Default::default()
-            })
-            .unwrap()
-        })
-        .collect();
-
-    let root = tree
-        .new_with_children(
-            taffy::style::Style {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Row,
-                align_items: Some(AlignItems::FlexEnd),
-                size: taffy::prelude::Size {
-                    width: length(total_width as f32),
-                    height: auto(),
-                },
-                ..Default::default()
-            },
-            &children,
-        )
-        .unwrap();
-
-    tree.compute_layout(root, taffy::prelude::Size::MAX_CONTENT)
-        .unwrap();
-
-    children
-        .iter()
-        .map(|&child| {
-            let layout = tree.layout(child).unwrap();
-            (layout.location.x as usize, layout.size.width as usize)
-        })
-        .collect()
-}
 
 // ─── Image helpers ───────────────────────────────────────────────────
 
@@ -190,12 +141,15 @@ pub fn render_escpos(nodes: &[Node], resources: &RenderResources) -> Vec<u8> {
     let max_dots = printable_dots(paper_width_mm, dpi);
     let mut buf = Vec::new();
 
+    // Pre-compute column widths for all groups
+    let col_cache = precompute_columns_chars(nodes, base_width, 2.0, 1.0);
+
     // Initialize printer
     cmd::init(&mut buf);
 
     // Pass 2: render nodes
-    for node in nodes {
-        render_node(node, base_width, max_dots, dpi, threshold, resources, &mut buf);
+    for (i, node) in nodes.iter().enumerate() {
+        render_node(node, base_width, max_dots, dpi, threshold, resources, col_cache.get(&i), &mut buf);
     }
 
     buf
@@ -209,6 +163,7 @@ fn render_node(
     dpi: f64,
     threshold: u8,
     resources: &RenderResources,
+    precomputed_cols: Option<&Vec<(f64, f64)>>,
     buf: &mut Vec<u8>,
 ) {
     match node {
@@ -255,9 +210,35 @@ fn render_node(
                 cmd::char_size(buf, w_mult, h_mult);
             }
 
-            let cols = column_layout(effective_width, cells.len());
-            emit_styled_columns(cells, &cols, effective_width, buf);
-            cmd::linefeed(buf);
+            let cols: Vec<(usize, usize)> = if w_mult > 1 {
+                // For size-multiplied text, recompute at effective width so
+                // natural content widths (in chars) are preserved correctly.
+                // Scaling pre-computed base-width values would shrink columns
+                // below their content width (e.g. "TOTAL" at 2x → 5/2=3 chars).
+                let pcts: Vec<Option<u32>> = cells.iter().map(|c| c.width_pct).collect();
+                let natural: Vec<f64> = cells.iter().map(|c| {
+                    match &c.content {
+                        CellContent::Spans(spans) => spans_to_text(spans).len() as f64,
+                        CellContent::Divider(_) => 0.0,
+                    }
+                }).collect();
+                column_widths(&pcts, &natural, effective_width as f64, 2.0, 1.0)
+                    .into_iter()
+                    .map(|(x, w)| (x.round() as usize, w.round() as usize))
+                    .collect()
+            } else if let Some(pre) = precomputed_cols {
+                pre.iter().map(|&(x, w)| {
+                    (x.round() as usize, w.round() as usize)
+                }).collect()
+            } else {
+                let pcts: Vec<Option<u32>> = cells.iter().map(|c| c.width_pct).collect();
+                let natural = vec![0.0; cells.len()];
+                column_widths(&pcts, &natural, effective_width as f64, 2.0, 1.0)
+                    .into_iter()
+                    .map(|(x, w)| (x.round() as usize, w.round() as usize))
+                    .collect()
+            };
+            emit_wrapped_columns(cells, &cols, effective_width, buf);
 
             if w_mult > 1 || h_mult > 1 {
                 cmd::char_size(buf, 1, 1);
@@ -280,6 +261,7 @@ fn render_node(
             width,
             height,
             align,
+            ..
         } => {
             if let Some(img) = resources.images.get(url.as_str()) {
                 // Compute max bounds in dots
@@ -344,8 +326,24 @@ fn render_node(
             cmd::justify(buf, 0);
         }
 
-        Node::Feed { lines } => {
-            cmd::feed(buf, (*lines).min(255) as u8);
+        Node::Feed { amount, unit } => {
+            match unit {
+                FeedUnit::Lines => {
+                    // Integer lines → ESC d (line feed), fractional → ESC J (dot feed)
+                    if *amount == amount.round() && *amount <= 255.0 {
+                        cmd::feed(buf, *amount as u8);
+                    } else {
+                        // Convert fractional lines to dots: line height ≈ 30 dots at 203 DPI
+                        let line_dots = (dpi / 203.0 * 30.0).round();
+                        let dots = (amount * line_dots).round().min(255.0).max(0.0) as u8;
+                        cmd::feed_dots(buf, dots);
+                    }
+                }
+                FeedUnit::Mm => {
+                    let dots = (amount * dpi / 25.4).round().min(255.0).max(0.0) as u8;
+                    cmd::feed_dots(buf, dots);
+                }
+            }
         }
 
         Node::Cut { partial } => {
@@ -386,63 +384,106 @@ fn emit_styled_line(spans: &[Span], full_text: &str, line: &str, buf: &mut Vec<u
     buf.extend_from_slice(line.as_bytes());
 }
 
-/// Emit a columns line with per-cell style commands.
-fn emit_styled_columns(
+/// Emit columns with word-wrapping support.
+///
+/// Each text cell is word-wrapped to its column width. The row spans
+/// as many output lines as the tallest cell requires.
+fn emit_wrapped_columns(
     cells: &[Cell],
     cols: &[(usize, usize)],
     _effective_width: usize,
     buf: &mut Vec<u8>,
 ) {
-    // Track cursor position
-    let mut cursor = 0usize;
+    // Wrap each cell's text and collect lines per cell.
+    let mut cell_lines: Vec<Vec<String>> = Vec::with_capacity(cells.len());
+    let mut max_lines = 1usize;
 
     for (i, cell) in cells.iter().enumerate() {
         if i >= cols.len() {
-            break;
+            cell_lines.push(vec![]);
+            continue;
         }
-        let (col_x, col_w) = cols[i];
-
-        // Pad to column start
-        while cursor < col_x {
-            buf.push(b' ');
-            cursor += 1;
-        }
+        let (_col_x, col_w) = cols[i];
 
         match &cell.content {
             CellContent::Spans(spans) => {
-                let cell_text = spans_to_text(spans);
-                let text_len = cell_text.len();
-                let offset = align_offset(col_w, text_len, cell.align);
-
-                // Pad for alignment
-                for _ in 0..offset {
-                    buf.push(b' ');
-                    cursor += 1;
-                }
-
-                // Emit styled spans
-                let available = col_w.saturating_sub(offset);
-                let mut chars_remaining = available.min(text_len);
-                for span in spans {
-                    if chars_remaining == 0 {
-                        break;
-                    }
-                    let span_len = span.text.len().min(chars_remaining);
-                    set_span_style(buf, &span.style, true);
-                    buf.extend_from_slice(&span.text.as_bytes()[..span_len]);
-                    set_span_style(buf, &span.style, false);
-                    cursor += span_len;
-                    chars_remaining -= span_len;
-                }
+                let text = spans_to_text(spans);
+                let lines = word_wrap(&text, col_w);
+                max_lines = max_lines.max(lines.len());
+                cell_lines.push(lines);
             }
-            CellContent::Divider(style) => {
-                let ch = divider_char(*style);
-                for _ in 0..col_w {
-                    buf.push(ch as u8);
-                    cursor += 1;
+            CellContent::Divider(_) => {
+                // Dividers are single-line
+                cell_lines.push(vec![]);
+            }
+        }
+    }
+
+    // Emit one output line per wrapped row.
+    for row in 0..max_lines {
+        let mut cursor = 0usize;
+
+        for (i, cell) in cells.iter().enumerate() {
+            if i >= cols.len() {
+                break;
+            }
+            let (col_x, col_w) = cols[i];
+
+            // Pad to column start
+            while cursor < col_x {
+                buf.push(b' ');
+                cursor += 1;
+            }
+
+            match &cell.content {
+                CellContent::Spans(spans) => {
+                    let line_text = cell_lines[i]
+                        .get(row)
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
+                    let text_len = line_text.len();
+                    let offset = align_offset(col_w, text_len, cell.align);
+
+                    // Pad for alignment
+                    for _ in 0..offset {
+                        buf.push(b' ');
+                        cursor += 1;
+                    }
+
+                    // For the first line, emit styled spans; for wrapped lines, plain text
+                    if row == 0 {
+                        let available = col_w.saturating_sub(offset);
+                        let mut chars_remaining = available.min(text_len);
+                        for span in spans {
+                            if chars_remaining == 0 {
+                                break;
+                            }
+                            let span_len = span.text.len().min(chars_remaining);
+                            set_span_style(buf, &span.style, true);
+                            buf.extend_from_slice(&span.text.as_bytes()[..span_len]);
+                            set_span_style(buf, &span.style, false);
+                            cursor += span_len;
+                            chars_remaining -= span_len;
+                        }
+                    } else {
+                        buf.extend_from_slice(line_text.as_bytes());
+                        cursor += text_len;
+                    }
+                }
+                CellContent::Divider(style) => {
+                    // Only draw divider on the last row (baseline-aligned)
+                    if row == max_lines - 1 {
+                        let ch = divider_char(*style);
+                        for _ in 0..col_w {
+                            buf.push(ch as u8);
+                            cursor += 1;
+                        }
+                    }
                 }
             }
         }
+
+        cmd::linefeed(buf);
     }
 }
 

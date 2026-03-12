@@ -2,7 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use rip_image::{render_pixels, RenderError};
-use rip_parser::{parse, collect_resources, ImageData, RenderResources};
+use rip_parser::{parse, collect_resources};
+use rip_resources::{ImageData, RenderResources};
 
 /// Create a synthetic grayscale test image (checkerboard pattern).
 fn synthetic_image(width: u32, height: u32) -> ImageData {

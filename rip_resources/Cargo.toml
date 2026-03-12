@@ -1,0 +1,15 @@
+[package]
+name = "rip_resources"
+version = "0.1.0"
+edition = "2021"
+description = "Resource processing for Rip markup (image decoding, scaling, dithering)"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zachzurn/rip"
+authors = ["Zach Zurn"]
+
+[dependencies]
+rip_parser = { path = "../rip_parser" }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
+resvg = "0.44"
+ureq = "3"
+sha2 = "0.10"

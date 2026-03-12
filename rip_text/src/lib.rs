@@ -1,8 +1,5 @@
 use rip_parser::ast::*;
-use rip_parser::text_util::{align_offset, center, divider_char, spans_to_text, word_wrap};
-use taffy::prelude::{
-    auto, length, AlignItems, Display, FlexDirection, TaffyMaxContent, TaffyTree,
-};
+use rip_parser::text_util::{align_offset, center, column_widths, divider_char, spans_to_text, word_wrap, precompute_columns_chars};
 
 /// Compute characters per line from paper width (mm) and font size (pt).
 ///
@@ -32,18 +29,22 @@ pub fn render_text(nodes: &[Node]) -> String {
     }
 
     let width = chars_per_line(paper_width_mm, font_points);
+
+    // Pre-compute column widths for all groups
+    let col_cache = precompute_columns_chars(nodes, width, 2.0, 1.0);
+
     let mut out = String::new();
 
     // Pass 2: render nodes
-    for node in nodes {
-        render_node(node, width, &mut out);
+    for (i, node) in nodes.iter().enumerate() {
+        render_node(node, width, col_cache.get(&i), &mut out);
     }
 
     out
 }
 
 /// Render a single AST node, appending lines to `out`.
-fn render_node(node: &Node, width: usize, out: &mut String) {
+fn render_node(node: &Node, width: usize, precomputed_cols: Option<&Vec<(f64, f64)>>, out: &mut String) {
     match node {
         Node::Text { spans, size } => {
             let text = spans_to_text(spans);
@@ -60,44 +61,85 @@ fn render_node(node: &Node, width: usize, out: &mut String) {
         }
 
         Node::Columns { cells, .. } => {
-            let cols = column_layout(width, cells.len());
-            let mut line = String::new();
+            let cols: Vec<(usize, usize)> = if let Some(pre) = precomputed_cols {
+                pre.iter().map(|&(x, w)| (x.round() as usize, w.round() as usize)).collect()
+            } else {
+                // Fallback: equal widths, no gap
+                let pcts: Vec<Option<u32>> = cells.iter().map(|c| c.width_pct).collect();
+                let natural = vec![0.0; cells.len()];
+                column_widths(&pcts, &natural, width as f64, 2.0, 1.0)
+                    .into_iter()
+                    .map(|(x, w)| (x.round() as usize, w.round() as usize))
+                    .collect()
+            };
+
+            // Word-wrap each cell and determine max lines needed.
+            let mut cell_lines: Vec<Vec<String>> = Vec::with_capacity(cells.len());
+            let mut max_lines = 1usize;
 
             for (i, cell) in cells.iter().enumerate() {
                 if i >= cols.len() {
-                    break;
+                    cell_lines.push(vec![]);
+                    continue;
                 }
-                let (col_x, col_w) = cols[i];
+                let (_col_x, col_w) = cols[i];
 
-                while line.len() < col_x {
-                    line.push(' ');
-                }
-
-                let cell_text = match &cell.content {
-                    CellContent::Spans(spans) => spans_to_text(spans),
-                    CellContent::Divider(style) => {
-                        let ch = divider_char(*style);
-                        std::iter::repeat(ch).take(col_w).collect()
+                match &cell.content {
+                    CellContent::Spans(spans) => {
+                        let text = spans_to_text(spans);
+                        let lines = word_wrap(&text, col_w);
+                        max_lines = max_lines.max(lines.len());
+                        cell_lines.push(lines);
                     }
-                };
-
-                let text_len = cell_text.len();
-                let offset = align_offset(col_w, text_len, cell.align);
-
-                for _ in 0..offset {
-                    line.push(' ');
-                }
-
-                if text_len <= col_w.saturating_sub(offset) {
-                    line.push_str(&cell_text);
-                } else {
-                    let max = col_w.saturating_sub(offset);
-                    line.push_str(&cell_text[..max]);
+                    CellContent::Divider(_) => {
+                        cell_lines.push(vec![]);
+                    }
                 }
             }
 
-            out.push_str(line.trim_end());
-            out.push('\n');
+            // Emit one output line per wrapped row.
+            for row in 0..max_lines {
+                let mut line = String::new();
+
+                for (i, cell) in cells.iter().enumerate() {
+                    if i >= cols.len() {
+                        break;
+                    }
+                    let (col_x, col_w) = cols[i];
+
+                    while line.len() < col_x {
+                        line.push(' ');
+                    }
+
+                    match &cell.content {
+                        CellContent::Spans(_) => {
+                            let cell_text = cell_lines[i]
+                                .get(row)
+                                .map(|s| s.as_str())
+                                .unwrap_or("");
+                            let text_len = cell_text.len();
+                            let offset = align_offset(col_w, text_len, cell.align);
+
+                            for _ in 0..offset {
+                                line.push(' ');
+                            }
+                            line.push_str(cell_text);
+                        }
+                        CellContent::Divider(style) => {
+                            // Only draw divider on the last row
+                            if row == max_lines - 1 {
+                                let ch = divider_char(*style);
+                                for _ in 0..col_w {
+                                    line.push(ch);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                out.push_str(line.trim_end());
+                out.push('\n');
+            }
         }
 
         Node::Line { style } => {
@@ -126,8 +168,13 @@ fn render_node(node: &Node, width: usize, out: &mut String) {
             out.push('\n');
         }
 
-        Node::Feed { lines } => {
-            for _ in 0..*lines {
+        Node::Feed { amount, unit } => {
+            // Text can only do whole lines; round fractional, drop mm
+            let lines = match unit {
+                FeedUnit::Lines => amount.round() as usize,
+                FeedUnit::Mm => 0, // sub-line precision not possible in plain text
+            };
+            for _ in 0..lines {
                 out.push('\n');
             }
         }
@@ -140,56 +187,4 @@ fn render_node(node: &Node, width: usize, out: &mut String) {
         | Node::Cut { .. }
         | Node::Drawer => {}
     }
-}
-
-/// Compute column layout using Taffy flexbox.
-///
-/// Same flex settings as the image renderer:
-///   container: `display: flex; flex-direction: row; align-items: flex-end;`
-///   children:  `flex: 1 0 0%;`
-fn column_layout(total_width: usize, cell_count: usize) -> Vec<(usize, usize)> {
-    if cell_count == 0 {
-        return vec![];
-    }
-
-    let mut tree: TaffyTree<()> = TaffyTree::new();
-
-    let children: Vec<_> = (0..cell_count)
-        .map(|_| {
-            tree.new_leaf(taffy::style::Style {
-                flex_grow: 1.0,
-                flex_shrink: 0.0,
-                flex_basis: length(0.0),
-                ..Default::default()
-            })
-            .unwrap()
-        })
-        .collect();
-
-    let root = tree
-        .new_with_children(
-            taffy::style::Style {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Row,
-                align_items: Some(AlignItems::FlexEnd),
-                size: taffy::prelude::Size {
-                    width: length(total_width as f32),
-                    height: auto(),
-                },
-                ..Default::default()
-            },
-            &children,
-        )
-        .unwrap();
-
-    tree.compute_layout(root, taffy::prelude::Size::MAX_CONTENT)
-        .unwrap();
-
-    children
-        .iter()
-        .map(|&child| {
-            let layout = tree.layout(child).unwrap();
-            (layout.location.x as usize, layout.size.width as usize)
-        })
-        .collect()
 }

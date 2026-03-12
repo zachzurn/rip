@@ -112,6 +112,9 @@ pub fn ascent(font: &Font, size_px: f32) -> f32 {
 
 /// Render a list of spans onto the canvas at the given position.
 ///
+/// When `bold_font` is `Some`, bold spans use the real bold font instead of
+/// the faux double-blit. When `None`, faux bold is used as fallback.
+///
 /// Returns the total width drawn in pixels.
 pub fn render_spans(
     canvas: &mut Canvas,
@@ -120,6 +123,7 @@ pub fn render_spans(
     y: f32,
     font: &Font,
     size_px: f32,
+    bold_font: Option<(&Font, f32)>,
     cache: &GlyphCache,
 ) -> f32 {
     let baseline_y = y + ascent(font, size_px);
@@ -128,10 +132,17 @@ pub fn render_spans(
     for span in spans {
         let span_start_x = cursor_x;
 
+        let (active_font, active_px) = if span.style == SpanStyle::Bold {
+            bold_font.unwrap_or((font, size_px))
+        } else {
+            (font, size_px)
+        };
+        let use_faux_bold = span.style == SpanStyle::Bold && bold_font.is_none();
+
         for ch in span.text.chars() {
-            let glyph = match cache.get(ch, font, size_px) {
+            let glyph = match cache.get(ch, active_font, active_px) {
                 Some(g) => g,
-                None => { cursor_x += font.metrics(ch, size_px).advance_width; continue; }
+                None => { cursor_x += active_font.metrics(ch, active_px).advance_width; continue; }
             };
             let metrics = &glyph.metrics;
 
@@ -156,7 +167,7 @@ pub fn render_spans(
                     &glyph.bitmap,
                 );
 
-                if span.style == SpanStyle::Bold {
+                if use_faux_bold {
                     canvas.blit_glyph(
                         glyph_x as i32 + 1,
                         glyph_y as i32,
@@ -199,10 +210,23 @@ pub fn render_spans(
 }
 
 /// Measure the total pixel width of a list of spans.
-pub fn measure_spans(spans: &[Span], font: &Font, size_px: f32) -> f32 {
+///
+/// When `bold_font` is `Some`, bold spans are measured with the real bold
+/// font. When `None`, faux bold adds 1px (the double-blit offset).
+pub fn measure_spans(spans: &[Span], font: &Font, size_px: f32, bold_font: Option<(&Font, f32)>) -> f32 {
     spans
         .iter()
-        .map(|span| measure_text(font, size_px, &span.text))
+        .map(|span| {
+            if span.style == SpanStyle::Bold {
+                if let Some((bf, bpx)) = bold_font {
+                    return measure_text(bf, bpx, &span.text);
+                }
+                let w = measure_text(font, size_px, &span.text);
+                if !span.text.is_empty() { w + 1.0 } else { w }
+            } else {
+                measure_text(font, size_px, &span.text)
+            }
+        })
         .sum()
 }
 
@@ -224,6 +248,7 @@ fn wrap_lines(
     font: &Font,
     size_px: f32,
     max_width: f32,
+    bold_font: Option<(&Font, f32)>,
 ) -> Vec<Vec<(char, SpanStyle)>> {
     if chars.is_empty() {
         return vec![vec![]];
@@ -238,7 +263,15 @@ fn wrap_lines(
     let mut word_width: f32 = 0.0;
 
     for &(ch, style) in chars {
-        let advance = font.metrics(ch, size_px).advance_width;
+        let advance = if style == SpanStyle::Bold {
+            if let Some((bf, bpx)) = bold_font {
+                bf.metrics(ch, bpx).advance_width
+            } else {
+                font.metrics(ch, size_px).advance_width
+            }
+        } else {
+            font.metrics(ch, size_px).advance_width
+        };
 
         if ch == ' ' {
             // Space: commit the current word to the line first
@@ -284,7 +317,15 @@ fn wrap_lines(
                 }
                 // Put all but the last char of the word on a line
                 let last = word.pop().unwrap();
-                let last_advance = font.metrics(last.0, size_px).advance_width;
+                let last_advance = if last.1 == SpanStyle::Bold {
+                    if let Some((bf, bpx)) = bold_font {
+                        bf.metrics(last.0, bpx).advance_width
+                    } else {
+                        font.metrics(last.0, size_px).advance_width
+                    }
+                } else {
+                    font.metrics(last.0, size_px).advance_width
+                };
                 lines.push(word.clone());
                 word.clear();
                 word.push(last);
@@ -322,18 +363,24 @@ fn wrap_lines(
 }
 
 /// Count how many wrapped lines the spans would occupy at the given max width.
-pub fn count_lines_wrapped(spans: &[Span], font: &Font, size_px: f32, max_width: f32) -> u32 {
+pub fn count_lines_wrapped(
+    spans: &[Span],
+    font: &Font,
+    size_px: f32,
+    max_width: f32,
+    bold_font: Option<(&Font, f32)>,
+) -> u32 {
     if max_width <= 0.0 {
         return 1;
     }
     let chars = flatten_spans(spans);
-    let lines = wrap_lines(&chars, font, size_px, max_width);
+    let lines = wrap_lines(&chars, font, size_px, max_width, bold_font);
     lines.len() as u32
 }
 
 /// Render spans with word-level wrapping. Returns total pixel height used.
 ///
-/// If `center` is true, each wrapped line is centered within `max_width`.
+/// Each wrapped line is aligned within `max_width` according to `align`.
 pub fn render_spans_wrapped(
     canvas: &mut Canvas,
     spans: &[Span],
@@ -342,28 +389,36 @@ pub fn render_spans_wrapped(
     font: &Font,
     size_px: f32,
     max_width: f32,
-    center: bool,
+    align: Align,
+    bold_font: Option<(&Font, f32)>,
     cache: &GlyphCache,
 ) -> u32 {
     let lh = line_height(font, size_px);
     let chars = flatten_spans(spans);
-    let lines = wrap_lines(&chars, font, size_px, max_width);
+    let lines = wrap_lines(&chars, font, size_px, max_width, bold_font);
 
     // Render each line
     for (line_idx, line_chars) in lines.iter().enumerate() {
         let line_y = y + line_idx as f32 * lh;
         let baseline_y = line_y + ascent(font, size_px);
 
-        // Calculate line width for centering
+        // Calculate line width for alignment
         let line_width: f32 = line_chars
             .iter()
-            .map(|(ch, _)| font.metrics(*ch, size_px).advance_width)
+            .map(|(ch, style)| {
+                if *style == SpanStyle::Bold {
+                    if let Some((bf, bpx)) = bold_font {
+                        return bf.metrics(*ch, bpx).advance_width;
+                    }
+                }
+                font.metrics(*ch, size_px).advance_width
+            })
             .sum();
 
-        let x_offset = if center {
-            x_start + (max_width - line_width).max(0.0) / 2.0
-        } else {
-            x_start
+        let x_offset = match align {
+            Align::Left => x_start,
+            Align::Center => x_start + (max_width - line_width).max(0.0) / 2.0,
+            Align::Right => x_start + (max_width - line_width).max(0.0),
         };
 
         let mut cursor_x = x_offset;
@@ -382,9 +437,16 @@ pub fn render_spans_wrapped(
                 run_style = style;
             }
 
-            let glyph = match cache.get(ch, font, size_px) {
+            let (active_font, active_px) = if style == SpanStyle::Bold {
+                bold_font.unwrap_or((font, size_px))
+            } else {
+                (font, size_px)
+            };
+            let use_faux_bold = style == SpanStyle::Bold && bold_font.is_none();
+
+            let glyph = match cache.get(ch, active_font, active_px) {
                 Some(g) => g,
-                None => { cursor_x += font.metrics(ch, size_px).advance_width; continue; }
+                None => { cursor_x += active_font.metrics(ch, active_px).advance_width; continue; }
             };
             let metrics = &glyph.metrics;
             let glyph_x = cursor_x + metrics.xmin as f32;
@@ -408,7 +470,7 @@ pub fn render_spans_wrapped(
                     &glyph.bitmap,
                 );
 
-                if style == SpanStyle::Bold {
+                if use_faux_bold {
                     canvas.blit_glyph(
                         glyph_x as i32 + 1,
                         glyph_y as i32,

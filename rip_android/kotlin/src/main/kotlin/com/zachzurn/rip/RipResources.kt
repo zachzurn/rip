@@ -177,10 +177,14 @@ internal object RipResourceLoader {
         val luma = ByteArray(width * height)
         for (i in argb.indices) {
             val pixel = argb[i]
+            val a = (pixel ushr 24) and 0xFF
             val r = (pixel shr 16) and 0xFF
             val g = (pixel shr 8) and 0xFF
             val b = pixel and 0xFF
-            luma[i] = (0.299 * r + 0.587 * g + 0.114 * b).toInt().toByte()
+            // BT.601 luma, blended against white (255) background using alpha
+            val l = 0.299 * r + 0.587 * g + 0.114 * b
+            val af = a / 255.0
+            luma[i] = (l * af + 255.0 * (1.0 - af)).toInt().toByte()
         }
 
         return RipImageData(width, height, luma)

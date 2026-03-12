@@ -1,13 +1,9 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use std::time::{Duration, Instant};
-
-use rip::{ImageData, RenderResources};
-use sha2::{Digest, Sha256};
 
 // ---------------------------------------------------------------------------
 // Tracking allocator — wraps System, counts bytes via atomics
@@ -87,8 +83,14 @@ fn fmt_count(n: usize) -> String {
 // CLI arguments
 // ---------------------------------------------------------------------------
 
+enum PrintMode {
+    Escpos,
+    Raster,
+}
+
 enum Output {
     File(String),
+    Print(String, PrintMode),
     Bench,
 }
 
@@ -105,6 +107,9 @@ fn parse_args() -> Args {
     let mut base_dir: Option<PathBuf> = None;
     let mut cache_dir: Option<PathBuf> = None;
     let mut positional: Vec<String> = Vec::new();
+
+    let mut print_port: Option<String> = None;
+    let mut use_raster = false;
 
     let mut i = 0;
     while i < raw.len() {
@@ -125,11 +130,43 @@ fn parse_args() -> Args {
                 }
                 cache_dir = Some(PathBuf::from(&raw[i]));
             }
+            "--print" => {
+                i += 1;
+                if i >= raw.len() {
+                    eprintln!("error: --print requires a port argument (e.g. COM5, /dev/usb/lp0)");
+                    process::exit(1);
+                }
+                print_port = Some(raw[i].clone());
+            }
+            "--raster" => {
+                use_raster = true;
+            }
             _ => {
                 positional.push(raw[i].clone());
             }
         }
         i += 1;
+    }
+
+    // --print only needs the input file
+    if print_port.is_some() {
+        if positional.is_empty() {
+            usage();
+        }
+        let rip_path = positional[0].clone();
+        let mode = if use_raster { PrintMode::Raster } else { PrintMode::Escpos };
+        let base_dir = base_dir.unwrap_or_else(|| {
+            Path::new(&rip_path)
+                .parent()
+                .unwrap_or(Path::new("."))
+                .to_path_buf()
+        });
+        return Args {
+            rip_path,
+            output: Output::Print(print_port.unwrap(), mode),
+            base_dir,
+            cache_dir,
+        };
     }
 
     if positional.len() < 2 {
@@ -154,162 +191,19 @@ fn parse_args() -> Args {
     Args { rip_path, output, base_dir, cache_dir }
 }
 
-// ---------------------------------------------------------------------------
-// Resource loading
-// ---------------------------------------------------------------------------
-
-const MAX_DOWNLOAD_BYTES: u64 = 10 * 1024 * 1024; // 10MB
-
-fn is_url(s: &str) -> bool {
-    s.starts_with("http://") || s.starts_with("https://")
-}
-
-/// Load a local file, verifying it stays within base_dir.
-fn load_local(url: &str, base_dir: &Path) -> Option<Vec<u8>> {
-    let canonical_base = match fs::canonicalize(base_dir) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("warning: cannot resolve base dir {}: {e}", base_dir.display());
-            return None;
-        }
-    };
-
-    let joined = base_dir.join(url);
-    let canonical = match fs::canonicalize(&joined) {
-        Ok(p) => p,
-        Err(_) => return None, // file doesn't exist, silently skip
-    };
-
-    if !canonical.starts_with(&canonical_base) {
-        eprintln!("warning: path escapes base directory, skipping: {url}");
-        return None;
-    }
-
-    match fs::read(&canonical) {
-        Ok(bytes) => Some(bytes),
-        Err(e) => {
-            eprintln!("warning: cannot read {url}: {e}");
-            None
-        }
-    }
-}
-
-/// Build a cache filename from a URL: sha256 hex + original extension.
-fn cache_key(url: &str) -> String {
-    let hash = Sha256::digest(url.as_bytes());
-    let hex = format!("{hash:x}");
-
-    // Preserve extension from URL (strip query string first)
-    let path_part = url.split('?').next().unwrap_or(url);
-    let ext = Path::new(path_part)
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("bin");
-
-    format!("{hex}.{ext}")
-}
-
-/// Download a remote URL, using cache_dir if provided.
-fn load_remote(url: &str, cache_dir: Option<&Path>) -> Option<Vec<u8>> {
-    // Check cache first
-    if let Some(dir) = cache_dir {
-        let cached_path = dir.join(cache_key(url));
-        if let Ok(bytes) = fs::read(&cached_path) {
-            return Some(bytes);
-        }
-    }
-
-    // Download
-    eprintln!("downloading {url}...");
-    let response = match ureq::get(url).call() {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("warning: download failed for {url}: {e}");
-            return None;
-        }
-    };
-
-    let mut bytes = Vec::new();
-    match response
-        .into_body()
-        .with_config()
-        .limit(MAX_DOWNLOAD_BYTES)
-        .reader()
-        .read_to_end(&mut bytes)
-    {
-        Ok(_) => {}
-        Err(e) => {
-            eprintln!("warning: failed reading response for {url}: {e}");
-            return None;
-        }
-    }
-
-    // Write to cache
-    if let Some(dir) = cache_dir {
-        let _ = fs::create_dir_all(dir);
-        let cached_path = dir.join(cache_key(url));
-        if let Err(e) = fs::write(&cached_path, &bytes) {
-            eprintln!("warning: cannot write cache for {url}: {e}");
-        }
-    }
-
-    Some(bytes)
-}
-
-/// Load raw bytes for a resource URL (local or remote).
-fn load_resource(url: &str, base_dir: &Path, cache_dir: Option<&Path>) -> Option<Vec<u8>> {
-    if is_url(url) {
-        load_remote(url, cache_dir)
-    } else {
-        load_local(url, base_dir)
-    }
-}
-
-/// Decode image bytes to grayscale ImageData.
-fn decode_image(url: &str, bytes: &[u8]) -> Option<ImageData> {
-    match image::load_from_memory(bytes) {
-        Ok(img) => {
-            let gray = img.to_luma8();
-            Some(ImageData {
-                width: gray.width(),
-                height: gray.height(),
-                pixels: gray.into_raw(),
-            })
-        }
-        Err(e) => {
-            eprintln!("warning: cannot decode image {url}: {e}");
-            None
-        }
-    }
-}
-
-fn load_rip(args: &Args) -> (Vec<rip::Node>, RenderResources) {
+fn parse_rip(args: &Args) -> Vec<rip::Node> {
     let source = fs::read_to_string(&args.rip_path).unwrap_or_else(|e| {
         eprintln!("error: cannot read {}: {e}", args.rip_path);
         process::exit(1);
     });
+    rip::parse(&source)
+}
 
-    let nodes = rip::parse(&source);
-    let res = rip::collect_resources(&nodes);
-
-    let mut resources = RenderResources::default();
-    let cache = args.cache_dir.as_deref();
-
-    for url in &res.fonts {
-        if let Some(bytes) = load_resource(url, &args.base_dir, cache) {
-            resources.fonts.insert(url.clone(), bytes);
-        }
+fn make_config(args: &Args) -> rip::ResourceConfig {
+    rip::ResourceConfig {
+        resource_dir: Some(args.base_dir.clone()),
+        cache_dir: args.cache_dir.clone(),
     }
-
-    for url in &res.images {
-        if let Some(bytes) = load_resource(url, &args.base_dir, cache) {
-            if let Some(img) = decode_image(url, &bytes) {
-                resources.images.insert(url.clone(), img);
-            }
-        }
-    }
-
-    (nodes, resources)
 }
 
 // ---------------------------------------------------------------------------
@@ -354,11 +248,12 @@ fn bench_fn<F: FnMut()>(name: &str, iterations: u32, mut f: F) {
 fn run_bench(args: &Args) {
     let iterations = 100;
 
-    // Warmup: load + render once so downloads, cache, and OS page faults
-    // are all settled before we start timing.
-    let _ = load_rip(args);
+    let nodes = parse_rip(args);
+    let config = make_config(args);
 
-    let (nodes, resources) = load_rip(args);
+    // Warmup: render once so downloads, cache, and OS page faults
+    // are all settled before we start timing.
+    let _ = rip::render_image(&nodes, &config);
 
     let name = Path::new(&args.rip_path)
         .file_stem()
@@ -367,21 +262,16 @@ fn run_bench(args: &Args) {
 
     eprintln!("benchmarking {name} ({iterations} iterations):");
 
-    bench_fn("render_luma8", iterations, || {
-        let _ = rip::render_luma8(&nodes, &resources);
+    bench_fn("render_image", iterations, || {
+        let _ = rip::render_image(&nodes, &config);
     });
 
-    bench_fn("render_luma1", iterations, || {
-        let _ = rip::render_luma1(&nodes, &resources);
-    });
-
-    let output = rip::render_luma8(&nodes, &resources).unwrap();
-    bench_fn("pack_luma1", iterations, || {
-        let _ = rip::pack_luma1(output.width, &output.pixels, rip::BLACK_THRESHOLD);
+    bench_fn("render_raster", iterations, || {
+        let _ = rip::render_raster(&nodes, &config);
     });
 
     bench_fn("render_escpos", iterations, || {
-        let _ = rip::render_escpos(&nodes, &resources);
+        let _ = rip::render_escpos(&nodes, &config);
     });
 
     bench_fn("render_html", iterations, || {
@@ -397,48 +287,39 @@ fn run_bench(args: &Args) {
 // Render to file
 // ---------------------------------------------------------------------------
 
-fn render_to_file(nodes: &[rip::Node], resources: &RenderResources, out_path: &str) {
+fn render_to_file(nodes: &[rip::Node], args: &Args, out_path: &str) {
     let ext = Path::new(out_path)
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("");
 
+    let config = make_config(args);
+
     match ext {
         "png" => {
-            let output = rip::render_luma8(nodes, resources).unwrap();
-            image::save_buffer(
-                out_path,
-                &output.pixels,
-                output.width,
-                output.height,
-                image::ColorType::L8,
-            )
-            .unwrap_or_else(|e| {
+            let png_bytes = rip::render_image(nodes, &config).unwrap_or_else(|e| {
+                eprintln!("error: render failed: {e}");
+                process::exit(1);
+            });
+            fs::write(out_path, &png_bytes).unwrap_or_else(|e| {
                 eprintln!("error: cannot write PNG: {e}");
                 process::exit(1);
             });
-            eprintln!(
-                "wrote {out_path} ({}x{}, {} bytes)",
-                output.width,
-                output.height,
-                fs::metadata(out_path).map(|m| m.len()).unwrap_or(0),
-            );
+            eprintln!("wrote {out_path} ({} bytes)", png_bytes.len());
         }
         "raster" => {
-            let output = rip::render_luma1(nodes, resources).unwrap();
-            fs::write(out_path, &output.pixels).unwrap_or_else(|e| {
+            let raster_bytes = rip::render_raster(nodes, &config).unwrap_or_else(|e| {
+                eprintln!("error: render failed: {e}");
+                process::exit(1);
+            });
+            fs::write(out_path, &raster_bytes).unwrap_or_else(|e| {
                 eprintln!("error: cannot write raster: {e}");
                 process::exit(1);
             });
-            eprintln!(
-                "wrote {out_path} ({}x{}, {} bytes)",
-                output.width,
-                output.height,
-                output.pixels.len(),
-            );
+            eprintln!("wrote {out_path} ({} bytes)", raster_bytes.len());
         }
         "bin" => {
-            let bytes = rip::render_escpos(nodes, resources);
+            let bytes = rip::render_escpos(nodes, &config);
             fs::write(out_path, &bytes).unwrap_or_else(|e| {
                 eprintln!("error: cannot write ESC/POS: {e}");
                 process::exit(1);
@@ -469,21 +350,66 @@ fn render_to_file(nodes: &[rip::Node], resources: &RenderResources, out_path: &s
 }
 
 // ---------------------------------------------------------------------------
+// Print to device
+// ---------------------------------------------------------------------------
+
+fn print_to_port(nodes: &[rip::Node], config: &rip::ResourceConfig, port: &str, mode: &PrintMode) {
+    let bytes = match mode {
+        PrintMode::Escpos => {
+            let data = rip::render_escpos(nodes, config);
+            eprintln!("ESC/POS: {} bytes", data.len());
+            data
+        }
+        PrintMode::Raster => {
+            let data = rip::render_raster(nodes, config).unwrap_or_else(|e| {
+                eprintln!("error: raster render failed: {e}");
+                process::exit(1);
+            });
+            eprintln!("raster: {} bytes", data.len());
+            data
+        }
+    };
+
+    eprintln!("sending to {port}...");
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .open(port)
+        .unwrap_or_else(|e| {
+            eprintln!("error: cannot open {port}: {e}");
+            process::exit(1);
+        });
+
+    use std::io::Write;
+    file.write_all(&bytes).unwrap_or_else(|e| {
+        eprintln!("error: write to {port} failed: {e}");
+        process::exit(1);
+    });
+
+    eprintln!("done — sent {} bytes to {port}", bytes.len());
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
 fn usage() -> ! {
     eprintln!("Usage: rip <file> <output> [options]");
+    eprintln!("       rip <file> --print <port> [options]");
     eprintln!("       rip <file> --bench  [options]");
     eprintln!();
     eprintln!("Output formats (determined by extension):");
-    eprintln!("  .png       8-bit grayscale PNG");
-    eprintln!("  .raster    1-bit packed raster data");
-    eprintln!("  .bin       ESC/POS binary commands");
+    eprintln!("  .png       1-bit black/white PNG (matches thermal printer)");
+    eprintln!("  .raster    ESC/POS raster commands (init + GS v 0 + feed)");
+    eprintln!("  .bin       ESC/POS text commands (printer's built-in fonts)");
     eprintln!("  .html      Standalone HTML document");
     eprintln!("  .txt       Plain text (monospace)");
     eprintln!();
     eprintln!("Options:");
+    eprintln!("  --print <port>   Render and send to a printer device");
+    eprintln!("                   (e.g. COM5, /dev/usb/lp0, /dev/ttyUSB0)");
+    eprintln!("  --raster         With --print, send raster image via GS v 0");
+    eprintln!("                   (default: ESC/POS text commands)");
     eprintln!("  --bench          Benchmark all render formats (100 iterations)");
     eprintln!("  --base <folder>  Base directory for resolving relative paths");
     eprintln!("                   (defaults to the .rip file's parent directory)");
@@ -497,8 +423,13 @@ fn main() {
     match &args.output {
         Output::Bench => run_bench(&args),
         Output::File(out_path) => {
-            let (nodes, resources) = load_rip(&args);
-            render_to_file(&nodes, &resources, out_path);
+            let nodes = parse_rip(&args);
+            render_to_file(&nodes, &args, out_path);
+        }
+        Output::Print(port, mode) => {
+            let nodes = parse_rip(&args);
+            let config = make_config(&args);
+            print_to_port(&nodes, &config, port, mode);
         }
     }
 }

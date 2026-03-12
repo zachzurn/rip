@@ -1,0 +1,19 @@
+[package]
+name = "rip_nodejs"
+version = "0.1.0"
+edition = "2021"
+description = "Native Node.js addon for Rip receipt markup rendering"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zachzurn/rip"
+authors = ["Zach Zurn"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rip = { path = "../rip" }
+napi = { version = "3", default-features = false, features = ["napi6"] }
+napi-derive = "3"
+
+[build-dependencies]
+napi-build = "2"

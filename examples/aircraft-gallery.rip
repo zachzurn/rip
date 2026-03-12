@@ -1,0 +1,82 @@
+// ─── Aircraft Gallery Receipt ───
+@printer-width(80mm)
+
+#### AIRCRAFT SPOTTER'S LOG ####
+|> Field Guide Collection <|
+
+===
+
+## Spy Planes ##
+
+---
+
+|> @image(https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/Lockheed_SR-71_Blackbird.jpg/960px-Lockheed_SR-71_Blackbird.jpg, 200) <|
+
+|> *SR-71 Blackbird* <|
+|> Lockheed, 1966 <|
+Top speed: Mach 3.3+
+Ceiling: 85,000 ft
+Role: Strategic reconnaissance
+The fastest air-breathing
+manned aircraft ever built.
+
+---
+
+|> @image(https://upload.wikimedia.org/wikipedia/commons/thumb/9/95/Usaf.u2.750pix.jpg/960px-Usaf.u2.750pix.jpg, 200) <|
+
+|> *U-2 Dragon Lady* <|
+|> Lockheed, 1955 <|
+Top speed: 500 mph
+Ceiling: 70,000+ ft
+Role: High-altitude recon
+Still in active service after
+nearly 70 years of operations.
+
+---
+
+|> @image(https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/F-117_Nighthawk_Front.jpg/960px-F-117_Nighthawk_Front.jpg, 200) <|
+
+|> *F-117 Nighthawk* <|
+|> Lockheed Skunk Works, 1981 <|
+Top speed: 617 mph
+Ceiling: 45,000 ft
+Role: Stealth attack
+World's first operational
+stealth aircraft.
+
+===
+
+## Commercial Aviation ##
+
+---
+
+|> @image(https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/B-747_Iberia.jpg/960px-B-747_Iberia.jpg, 200) <|
+
+|> *Boeing 747* <|
+|> Boeing, 1969 <|
+Top speed: Mach 0.92
+Range: 7,260 nmi
+Role: Widebody airliner
+The iconic "Queen of the Skies"
+ruled long-haul travel for
+over five decades.
+
+---
+
+|> @image(https://upload.wikimedia.org/wikipedia/commons/thumb/e/eb/British_Airways_Concorde_G-BOAC_03.jpg/960px-British_Airways_Concorde_G-BOAC_03.jpg, 200) <|
+
+|> *Concorde* <|
+|> BAC / Aerospatiale, 1969 <|
+Top speed: Mach 2.04
+Range: 3,900 nmi
+Role: Supersonic transport
+London to New York in under
+3.5 hours. Retired 2003.
+
+===
+
+|> Printed by Rip Markup <|
+|> rip receipt-lang.org <|
+
+@feed(6)
+@cut()

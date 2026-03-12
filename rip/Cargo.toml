@@ -9,6 +9,7 @@ authors = ["Zach Zurn"]
 
 [dependencies]
 rip_parser = { path = "../rip_parser" }
+rip_resources = { path = "../rip_resources" }
 rip_image = { path = "../rip_image" }
 rip_html = { path = "../rip_html" }
 rip_text = { path = "../rip_text" }

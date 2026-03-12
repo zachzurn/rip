@@ -48,6 +48,7 @@ pub fn render_html(nodes: &[Node]) -> String {
                 level,
                 font,
                 points,
+                ..
             } => config.apply_style(*level, font, *points),
             _ => {}
         }
@@ -111,6 +112,7 @@ fn render_node(node: &Node, _config: &StyleConfig, out: &mut String) {
             width,
             height,
             align,
+            ..
         } => {
             let align_class = align.map_or("", |a| match a {
                 Align::Left => " align-left",
@@ -157,9 +159,20 @@ fn render_node(node: &Node, _config: &StyleConfig, out: &mut String) {
             out.push_str("</div>\n");
         }
 
-        Node::Feed { lines } => {
-            for _ in 0..*lines {
-                out.push_str("<div class=\"blank\"></div>\n");
+        Node::Feed { amount, unit } => {
+            match unit {
+                FeedUnit::Lines => {
+                    let lines = amount.round() as usize;
+                    for _ in 0..lines {
+                        out.push_str("<div class=\"blank\"></div>\n");
+                    }
+                }
+                FeedUnit::Mm => {
+                    // Precise spacing via inline style
+                    out.push_str(&format!(
+                        "<div style=\"height:{:.2}mm\"></div>\n", amount
+                    ));
+                }
             }
         }
 

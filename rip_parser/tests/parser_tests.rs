@@ -206,10 +206,12 @@ fn size_wrapped_pipe_line() {
                 Cell {
                     content: CellContent::Spans(vec![span("TOTAL", SpanStyle::Bold)]),
                     align: Align::Left,
+                    width_pct: None,
                 },
                 Cell {
                     content: CellContent::Spans(vec![span("$19.74", SpanStyle::Bold)]),
                     align: Align::Right,
+                    width_pct: None,
                 },
             ],
             size: Size::TextM,
@@ -229,10 +231,12 @@ fn two_column_auto_align() {
                 Cell {
                     content: CellContent::Spans(vec![normal("Item Name")]),
                     align: Align::Left,
+                    width_pct: None,
                 },
                 Cell {
                     content: CellContent::Spans(vec![normal("$8.99")]),
                     align: Align::Right,
+                    width_pct: None,
                 },
             ],
             size: Size::Text,
@@ -249,6 +253,7 @@ fn centered_text() {
             cells: vec![Cell {
                 content: CellContent::Spans(vec![normal("centered text")]),
                 align: Align::Center,
+                width_pct: None,
             }],
             size: Size::Text,
         }]
@@ -264,6 +269,7 @@ fn right_aligned_text() {
             cells: vec![Cell {
                 content: CellContent::Spans(vec![normal("right aligned")]),
                 align: Align::Right,
+                width_pct: None,
             }],
             size: Size::Text,
         }]
@@ -279,6 +285,7 @@ fn left_aligned_text() {
             cells: vec![Cell {
                 content: CellContent::Spans(vec![normal("left aligned")]),
                 align: Align::Left,
+                width_pct: None,
             }],
             size: Size::Text,
         }]
@@ -286,12 +293,16 @@ fn left_aligned_text() {
 }
 
 #[test]
-fn pipe_without_closing_is_plain_text() {
+fn pipe_without_closing_is_column() {
     let nodes = parse("| no closing pipe");
     assert_eq!(
         nodes,
-        vec![Node::Text {
-            spans: vec![normal("| no closing pipe")],
+        vec![Node::Columns {
+            cells: vec![Cell {
+                content: CellContent::Spans(vec![normal("no closing pipe")]),
+                align: Align::Left,
+                width_pct: None,
+            }],
             size: Size::Text,
         }]
     );
@@ -349,6 +360,7 @@ fn style_directive() {
             level: Size::Text,
             font: "https://fonts.example.com/Mono.ttf".to_string(),
             points: 12.0,
+            bold: false,
         }]
     );
 }
@@ -362,6 +374,7 @@ fn style_default_font() {
             level: Size::Title,
             font: "default".to_string(),
             points: 24.0,
+            bold: false,
         }]
     );
 }
@@ -376,6 +389,7 @@ fn image_directive() {
             width: None,
             height: None,
             align: None,
+            dither: true,
         }]
     );
 }
@@ -390,6 +404,7 @@ fn image_with_width() {
             width: Some(200.0),
             height: None,
             align: None,
+            dither: true,
         }]
     );
 }
@@ -404,6 +419,7 @@ fn image_with_width_and_height() {
             width: Some(200.0),
             height: Some(100.0),
             align: None,
+            dither: true,
         }]
     );
 }
@@ -418,6 +434,7 @@ fn image_centered_in_pipes() {
             width: Some(200.0),
             height: None,
             align: Some(Align::Center),
+            dither: true,
         }]
     );
 }
@@ -488,7 +505,25 @@ fn cut_partial() {
 #[test]
 fn feed_directive() {
     let nodes = parse("@feed(3)");
-    assert_eq!(nodes, vec![Node::Feed { lines: 3 }]);
+    assert_eq!(nodes, vec![Node::Feed { amount: 3.0, unit: FeedUnit::Lines }]);
+}
+
+#[test]
+fn feed_fractional() {
+    let nodes = parse("@feed(.5)");
+    assert_eq!(nodes, vec![Node::Feed { amount: 0.5, unit: FeedUnit::Lines }]);
+
+    let nodes = parse("@feed(1/2)");
+    assert_eq!(nodes, vec![Node::Feed { amount: 0.5, unit: FeedUnit::Lines }]);
+}
+
+#[test]
+fn feed_with_units() {
+    let nodes = parse("@feed(2mm)");
+    assert_eq!(nodes, vec![Node::Feed { amount: 2.0, unit: FeedUnit::Mm }]);
+
+    let nodes = parse("@feed(.5in)");
+    assert_eq!(nodes, vec![Node::Feed { amount: 0.5 * 25.4, unit: FeedUnit::Mm }]);
 }
 
 #[test]
@@ -565,6 +600,7 @@ fn full_receipt() {
             level: Size::Text,
             font: "https://fonts.example.com/RobotoMono.ttf".to_string(),
             points: 12.0,
+            bold: false,
         }
     );
     assert_eq!(nodes[2], Node::Blank);
@@ -582,6 +618,7 @@ fn full_receipt() {
             cells: vec![Cell {
                 content: CellContent::Spans(vec![normal("742 Evergreen Terrace")]),
                 align: Align::Center,
+                width_pct: None,
             }],
             size: Size::Text,
         }
@@ -608,7 +645,7 @@ fn full_receipt() {
 
     // Verify printer commands at end
     let len = nodes.len();
-    assert_eq!(nodes[len - 3], Node::Feed { lines: 2 });
+    assert_eq!(nodes[len - 3], Node::Feed { amount: 2.0, unit: FeedUnit::Lines });
     assert_eq!(nodes[len - 2], Node::Cut { partial: false });
     assert_eq!(nodes[len - 1], Node::Drawer);
 }

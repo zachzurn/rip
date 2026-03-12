@@ -46,8 +46,8 @@ fn parse_line(line: &str, size: Size) -> Option<Node> {
         return Some(Node::Line { style });
     }
 
-    // Pipe line (must start and end with |)
-    if trimmed.starts_with('|') && trimmed.ends_with('|') {
+    // Pipe line (starts with |)
+    if trimmed.starts_with('|') {
         return Some(parse_pipe_line(trimmed, size));
     }
 
@@ -144,7 +144,7 @@ fn parse_pipe_line(line: &str, size: Size) -> Node {
 
     // Single cell containing only a directive → promote to directive with alignment
     if cell_count == 1 {
-        let (content, align) = &cells[0];
+        let (content, align, _) = &cells[0];
         let trimmed = content.trim();
         if trimmed.starts_with('@') {
             if let Some(node) = parse_directive(trimmed, *align) {
@@ -157,7 +157,7 @@ fn parse_pipe_line(line: &str, size: Size) -> Node {
     let columns: Vec<Cell> = cells
         .into_iter()
         .enumerate()
-        .map(|(i, (content, explicit_align))| {
+        .map(|(i, (content, explicit_align, width_pct))| {
             let align = match explicit_align {
                 Some(a) => a,
                 None => auto_align(i, cell_count),
@@ -169,11 +169,13 @@ fn parse_pipe_line(line: &str, size: Size) -> Node {
                 Cell {
                     content: CellContent::Divider(line_style),
                     align,
+                    width_pct,
                 }
             } else {
                 Cell {
                     content: CellContent::Spans(parse_spans(trimmed)),
                     align,
+                    width_pct,
                 }
             }
         })
@@ -185,32 +187,37 @@ fn parse_pipe_line(line: &str, size: Size) -> Node {
     }
 }
 
-/// Split pipe-delimited content into cells, extracting per-cell alignment.
+/// Split pipe-delimited content into cells, extracting per-cell alignment and width.
 /// Returns `None` alignment when no explicit `>` or `<` markers are present.
+/// Trailing `|` is optional.
 ///
-/// Input: `| Item Name |> $8.99 |`
-/// Output: `[("Item Name", None), ("$8.99", Some(Right))]`
-fn split_pipe_cells(line: &str) -> Vec<(String, Option<Align>)> {
+/// Input: `| Item Name |> $8.99 |` or `| Item Name |> $8.99`
+/// Output: `[("Item Name", None, None), ("$8.99", Some(Right), None)]`
+fn split_pipe_cells(line: &str) -> Vec<(String, Option<Align>, Option<u32>)> {
     let mut cells = Vec::new();
     let content = line.trim();
-    if !content.starts_with('|') || !content.ends_with('|') {
+    if !content.starts_with('|') {
         return cells;
     }
 
-    // Remove outer pipes and split
-    // We need to be careful about escaped pipes: \|
     let segments = split_on_pipes(content);
 
-    // segments[0] is empty (before first |), segments[last] is empty (after last |)
-    // The real cells are segments[1..segments.len()-1]
+    // segments[0] is empty (before first |)
+    // If trailing | present, segments[last] is empty → discard
+    // If no trailing |, segments[last] is the last cell content
     if segments.len() < 2 {
         return cells;
     }
 
-    for i in 1..segments.len() - 1 {
+    let end = segments.len();
+    for i in 1..end {
         let raw = &segments[i];
-        let (cell_content, align) = extract_cell_alignment(raw);
-        cells.push((cell_content, align));
+        // Skip empty trailing segment (from trailing |)
+        if i == end - 1 && raw.trim().is_empty() {
+            break;
+        }
+        let (cell_content, align, width_pct) = extract_cell_meta(raw);
+        cells.push((cell_content, align, width_pct));
     }
 
     cells
@@ -245,36 +252,102 @@ fn split_on_pipes(input: &str) -> Vec<String> {
     segments
 }
 
-/// Extract alignment from a cell's raw content.
+/// Extract cell metadata (width percentage, alignment) and content.
 ///
-/// The `>` or `<` modifiers appear at the edges of the cell content
-/// (right after the opening pipe or right before the closing pipe).
+/// The "meta prefix" immediately follows the `|` with no leading space:
+///   - Digits (1–100) → width percentage
+///   - `>` → right-align marker
+///   - `<` at end of content → center (with `>`) or explicit left
 ///
-/// `> text` → Right
-/// `> text <` → Center
-/// `text` → Left (default)
-fn extract_cell_alignment(raw: &str) -> (String, Option<Align>) {
-    let trimmed = raw.trim();
+/// Any space after `|` ends the meta and starts content.
+///
+/// Examples:
+///   `" text"` → content="text", align=None, width=None
+///   `"> text"` → content="text", align=Right, width=None
+///   `"80> text"` → content="text", align=Right, width=80
+///   `"80 text"` → content="text", align=None, width=80
+///   `"> text <"` → content="text", align=Center, width=None
+fn extract_cell_meta(raw: &str) -> (String, Option<Align>, Option<u32>) {
+    // Parse the prefix: everything before the first space (or the whole string)
+    // Check for leading space → no meta
+    let first_char = raw.chars().next();
+    if first_char.is_none() || first_char == Some(' ') || first_char == Some('\t') {
+        // Starts with space → no meta prefix, just content
+        let trimmed = raw.trim();
+        let ends_with_lt = trimmed.ends_with('<');
+        if ends_with_lt {
+            let inner = &trimmed[..trimmed.len() - 1];
+            return (inner.trim().to_string(), Some(Align::Left), None);
+        }
+        return (trimmed.to_string(), None, None);
+    }
 
-    let starts_with_gt = trimmed.starts_with('>');
+    // Parse the meta prefix: digits and/or > at the start
+    let mut chars = raw.chars().peekable();
+    let mut width_pct: Option<u32> = None;
+    let mut has_gt = false;
+    let mut prefix_len = 0;
+
+    // Consume leading digits
+    let mut digit_str = String::new();
+    while let Some(&ch) = chars.peek() {
+        if ch.is_ascii_digit() {
+            digit_str.push(ch);
+            chars.next();
+            prefix_len += 1;
+        } else {
+            break;
+        }
+    }
+
+    if !digit_str.is_empty() {
+        if let Ok(pct) = digit_str.parse::<u32>() {
+            if pct >= 1 {
+                width_pct = Some(pct);
+            }
+        }
+    }
+
+    // Consume `>` if present
+    if let Some(&'>') = chars.peek() {
+        has_gt = true;
+        chars.next();
+        prefix_len += 1;
+    }
+
+    // If no meta prefix was found at all, fall back to old behavior
+    if digit_str.is_empty() && !has_gt {
+        let trimmed = raw.trim();
+        let ends_with_lt = trimmed.ends_with('<');
+        if ends_with_lt {
+            let inner = &trimmed[..trimmed.len() - 1];
+            return (inner.trim().to_string(), Some(Align::Left), None);
+        }
+        return (trimmed.to_string(), None, None);
+    }
+
+    // The rest is content
+    let content_raw = &raw[prefix_len..];
+    let trimmed = content_raw.trim();
+
+    // Check trailing `<` for center alignment
     let ends_with_lt = trimmed.ends_with('<');
 
-    if starts_with_gt && ends_with_lt {
-        // |> text <| → Center
-        let inner = &trimmed[1..trimmed.len() - 1];
-        (inner.trim().to_string(), Some(Align::Center))
-    } else if starts_with_gt {
-        // |> text | → Right
-        let inner = &trimmed[1..];
-        (inner.trim().to_string(), Some(Align::Right))
-    } else if ends_with_lt {
-        // | text <| → explicitly marked left
-        let inner = &trimmed[..trimmed.len() - 1];
-        (inner.trim().to_string(), Some(Align::Left))
+    let align = if has_gt && ends_with_lt {
+        Some(Align::Center)
+    } else if has_gt {
+        Some(Align::Right)
     } else {
-        // | text | → no explicit markers
-        (trimmed.to_string(), None)
-    }
+        None
+    };
+
+    let content = if ends_with_lt {
+        trimmed[..trimmed.len() - 1].trim().to_string()
+    } else {
+        trimmed.to_string()
+    };
+
+    (content, align, width_pct)
 }
 
 /// Determine auto-alignment based on column position and total count.
@@ -340,16 +413,17 @@ fn parse_directive(line: &str, align: Option<Align>) -> Option<Node> {
             Some(Node::PrinterThreshold { threshold })
         }
         "style" => {
-            let level = parse_size_level(args.first()?)?;
+            let (level, bold) = parse_size_level(args.first()?)?;
             let font = args.get(1)?.to_string();
             let points = args.get(2)?.parse::<f64>().ok()?;
             Some(Node::Style {
                 level,
                 font,
                 points,
+                bold,
             })
         }
-        "image" => {
+        "image" | "logo" => {
             let url = args.first()?.to_string();
             let width = args.get(1).and_then(|s| s.parse::<f64>().ok());
             let height = args.get(2).and_then(|s| s.parse::<f64>().ok());
@@ -358,6 +432,7 @@ fn parse_directive(line: &str, align: Option<Align>) -> Option<Node> {
                 width,
                 height,
                 align,
+                dither: name == "image",
             })
         }
         "qr" => {
@@ -375,12 +450,40 @@ fn parse_directive(line: &str, align: Option<Align>) -> Option<Node> {
             Some(Node::Cut { partial })
         }
         "feed" => {
-            let lines = args.first()?.parse::<u32>().ok()?;
-            Some(Node::Feed { lines })
+            let arg = args.first()?.trim();
+            // Unit suffix → absolute distance in mm
+            if has_length_unit(arg) {
+                let mm = parse_length_to_mm(arg)?;
+                Some(Node::Feed { amount: mm, unit: FeedUnit::Mm })
+            }
+            // Fraction syntax (e.g. 1/2, 3/4)
+            else if let Some(val) = parse_fraction(arg) {
+                Some(Node::Feed { amount: val, unit: FeedUnit::Lines })
+            }
+            // Bare number → line multiplier
+            else {
+                let amount = arg.parse::<f64>().ok()?;
+                Some(Node::Feed { amount, unit: FeedUnit::Lines })
+            }
         }
         "drawer" => Some(Node::Drawer),
         _ => None,
     }
+}
+
+/// Check whether a string has a recognized length unit suffix (mm, cm, in).
+fn has_length_unit(s: &str) -> bool {
+    let s = s.trim();
+    s.ends_with("mm") || s.ends_with("cm") || s.ends_with("in")
+}
+
+/// Parse a fraction string like "1/2" or "3/4" into a float.
+fn parse_fraction(s: &str) -> Option<f64> {
+    let (num, den) = s.split_once('/')?;
+    let n = num.trim().parse::<f64>().ok()?;
+    let d = den.trim().parse::<f64>().ok()?;
+    if d == 0.0 { return None; }
+    Some(n / d)
 }
 
 /// Parse a length value with unit suffix into millimeters.
@@ -401,15 +504,31 @@ fn parse_length_to_mm(s: &str) -> Option<f64> {
     }
 }
 
-/// Parse a size level name to its enum value.
-fn parse_size_level(name: &str) -> Option<Size> {
-    match name {
-        "text" => Some(Size::Text),
-        "text-m" => Some(Size::TextM),
-        "text-l" => Some(Size::TextL),
-        "title" => Some(Size::Title),
-        "title-m" => Some(Size::TitleM),
-        "title-l" => Some(Size::TitleL),
-        _ => None,
+/// Parse a size level name to its enum value and bold flag.
+///
+/// Recognizes `-bold` suffix: `"text-bold"` → `(Text, true)`.
+fn parse_size_level(name: &str) -> Option<(Size, bool)> {
+    // Check for -bold suffix
+    if let Some(base) = name.strip_suffix("-bold") {
+        let size = match base {
+            "text" => Some(Size::Text),
+            "text-m" => Some(Size::TextM),
+            "text-l" => Some(Size::TextL),
+            "title" => Some(Size::Title),
+            "title-m" => Some(Size::TitleM),
+            "title-l" => Some(Size::TitleL),
+            _ => None,
+        }?;
+        return Some((size, true));
     }
+    let size = match name {
+        "text" => Size::Text,
+        "text-m" => Size::TextM,
+        "text-l" => Size::TextL,
+        "title" => Size::Title,
+        "title-m" => Size::TitleM,
+        "title-l" => Size::TitleL,
+        _ => return None,
+    };
+    Some((size, false))
 }

@@ -1,5 +1,7 @@
-use rip_parser::ast::Align;
-use taffy::prelude::*;
+use fontdue::Font;
+use rip_parser::ast::{Cell, CellContent};
+
+use crate::text;
 
 /// Convert millimeters to pixels at the given DPI.
 pub fn mm_to_px(mm: f64, dpi: f64) -> u32 {
@@ -26,72 +28,75 @@ pub fn pt_to_px(pt: f64, dpi: f64) -> f32 {
 
 /// Convert font point size to rasterization pixels at the given DPI.
 ///
-/// Uses `pt × (dpi/72)^0.65` scaling so text density on the rendered
-/// image closely matches real thermal printers. At 203 DPI, 12pt ≈ 23px.
+/// Uses `pt × (dpi/72)^0.75` scaling so text density on the rendered
+/// image closely matches real thermal printers. At 203 DPI, 12pt ≈ 27px.
 pub fn font_pt_to_px(pt: f64, dpi: f64) -> f32 {
-    (pt * (dpi / 72.0_f64).powf(0.65)) as f32
+    (pt * (dpi / 72.0_f64).powf(0.75)) as f32
 }
 
 /// Calculate the x-offset for content within a cell, given alignment.
-pub fn align_offset(cell_width: u32, content_width: u32, align: Align) -> u32 {
+pub fn align_offset(cell_width: u32, content_width: u32, align: rip_parser::ast::Align) -> u32 {
     match align {
-        Align::Left => 0,
-        Align::Right => cell_width.saturating_sub(content_width),
-        Align::Center => cell_width.saturating_sub(content_width) / 2,
+        rip_parser::ast::Align::Left => 0,
+        rip_parser::ast::Align::Right => cell_width.saturating_sub(content_width),
+        rip_parser::ast::Align::Center => cell_width.saturating_sub(content_width) / 2,
     }
 }
 
-/// Compute column offsets using Taffy flexbox layout.
+/// Computed layout for a single column cell.
+pub struct CellLayout {
+    pub x: u32,
+    pub width: u32,
+}
+
+/// Result of a column layout computation.
+pub struct ColumnLayout {
+    pub cells: Vec<CellLayout>,
+    pub row_height: u32,
+}
+
+/// Compute column layout with pre-computed widths and content-aware wrapped heights.
 ///
-/// Creates a flex-row container of `paper_width` pixels with `cell_count`
-/// equal-flex children. Returns `(x_offset, width)` for each column.
-pub fn column_layout(paper_width: u32, cell_count: usize) -> Vec<(u32, u32)> {
-    if cell_count == 0 {
-        return vec![];
+/// Uses the provided `(x, width)` pairs for column positions, then measures
+/// text wrapping to determine the row height.
+pub fn column_layout_wrapped(
+    cols: &[(f64, f64)],
+    cells: &[Cell],
+    font: &Font,
+    size_px: f32,
+    bold_font: Option<(&Font, f32)>,
+) -> ColumnLayout {
+    if cells.is_empty() || cols.is_empty() {
+        return ColumnLayout { cells: vec![], row_height: 0 };
     }
 
-    let mut tree: TaffyTree<()> = TaffyTree::new();
+    let lh = text::line_height(font, size_px);
 
-    // Mirrors the HTML renderer's CSS:
-    //   .cell { flex: 1 0 0%; }
-    let children: Vec<_> = (0..cell_count)
-        .map(|_| {
-            tree.new_leaf(Style {
-                flex_grow: 1.0,
-                flex_shrink: 0.0,
-                flex_basis: length(0.0),
-                ..Default::default()
-            })
-            .unwrap()
+    // Measure wrapped height for each cell
+    let mut max_lines = 1u32;
+    for (i, cell) in cells.iter().enumerate() {
+        if i >= cols.len() {
+            break;
+        }
+        let col_w = cols[i].1 as f32;
+        if let CellContent::Spans(spans) = &cell.content {
+            let num_lines = text::count_lines_wrapped(spans, font, size_px, col_w, bold_font);
+            max_lines = max_lines.max(num_lines);
+        }
+    }
+
+    let row_height = (lh * max_lines as f32).ceil() as u32;
+
+    let cell_layouts = cols
+        .iter()
+        .map(|&(x, w)| CellLayout {
+            x: x.round() as u32,
+            width: w.ceil() as u32,
         })
         .collect();
 
-    // Mirrors the HTML renderer's CSS:
-    //   .row { display: flex; align-items: flex-end; }
-    let root = tree
-        .new_with_children(
-            Style {
-                display: Display::Flex,
-                flex_direction: FlexDirection::Row,
-                align_items: Some(AlignItems::FlexEnd),
-                size: taffy::prelude::Size {
-                    width: length(paper_width as f32),
-                    height: auto(),
-                },
-                ..Default::default()
-            },
-            &children,
-        )
-        .unwrap();
-
-    tree.compute_layout(root, taffy::prelude::Size::MAX_CONTENT)
-        .unwrap();
-
-    children
-        .iter()
-        .map(|&child| {
-            let layout = tree.layout(child).unwrap();
-            (layout.location.x as u32, layout.size.width as u32)
-        })
-        .collect()
+    ColumnLayout {
+        cells: cell_layouts,
+        row_height,
+    }
 }

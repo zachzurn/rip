@@ -1,0 +1,212 @@
+// ─── Column Wrapping Test ───
+// Tests column layouts with varying text lengths,
+// overflow scenarios, and wrapping edge cases.
+
+@printer-width(80mm)
+
+// ─── Basic 2-Column (Short Text) ───
+## Basic Columns ##
+| Item |> $5.00 |
+| Tax |> $0.41 |
+| Total |> $5.41 |
+
+---
+
+// ─── 2-Column with Long Left Text ───
+## Long Left Column ##
+| Grilled Chicken Sandwich with Extra Pickles |> $12.99 |
+| Smoked Applewood Bacon Cheeseburger Deluxe |> $15.49 |
+| House-Made Garlic Parmesan Truffle Fries (Large) |> $8.75 |
+
+---
+
+// ─── 2-Column with Long Right Text ───
+## Long Right Column ##
+| Qty |> Artisan Sourdough Bread Loaf |
+| 1x |> Organic Cold-Pressed Orange Juice 16oz |
+
+---
+
+// ─── 2-Column Both Sides Long ───
+## Both Columns Long ##
+| Slow-Roasted Baby Back Ribs Half Rack |> Served with coleslaw and cornbread |
+| Wood-Fired Margherita Pizza 14 inch |> Fresh mozzarella and basil leaves |
+
+---
+
+// ─── 3-Column Layout ───
+## Three Columns ##
+| Qty |> Description <| Price |
+| 2x |> Widget <| $4.00 |
+| 1x |> Gadget <| $7.50 |
+| 3x |> Thingamajig <| $2.25 |
+
+---
+
+// ─── 3-Column with Overflow ───
+## Three Columns Overflow ##
+| 2x |> Organic Free-Range Chicken Breast <| $24.99 |
+| 1x |> Imported Italian Extra Virgin Olive Oil 500ml <| $18.75 |
+| 5x |> Hand-Crafted Artisan Chocolate Truffle Assortment Box <| $42.50 |
+
+---
+
+// ─── Single Column (Full Width) ───
+## Single Column ##
+| This is a single column that should use the entire paper width and will need to wrap |
+
+---
+
+// ─── Single Column Right-Aligned ───
+|> This is right-aligned text in a single column that is long enough to wrap |
+
+---
+
+// ─── Single Column Centered ───
+|> This is centered text in a single column that is long enough to need wrapping <|
+
+---
+
+// ─── 4-Column Layout ───
+## Four Columns ##
+| A | B | C | D |
+| One | Two | Three | Four |
+| Alpha | Bravo | Charlie | Delta |
+
+---
+
+// ─── 4-Column with Overflow ───
+## Four Columns Overflow ##
+| Appetizer | Main Course | Side Dish | Dessert |
+| Bruschetta with fresh tomatoes | Grilled salmon fillet | Roasted vegetables | Tiramisu |
+
+---
+
+// ─── Styled Text in Columns ───
+## Styled Column Overflow ##
+| *Bold text that is long enough to overflow its column* |> $99.99 |
+| _Underlined text that should also overflow the column_ |> $49.99 |
+| `Italic text that keeps going and going and going` |> $29.99 |
+
+---
+
+// ─── Size-Wrapped Columns ───
+## Sized Columns ##
+++ | Medium text in column |> $5.00 | ++
++++ | Large text in column |> $5.00 | +++
+
+---
+
+// ─── Size-Wrapped with Overflow ───
+## Sized Column Overflow ##
+++ | Slow-Roasted Pulled Pork Sandwich |> $14.99 | ++
++++ | Grilled Veggie Wrap |> $11.50 | +++
+
+---
+
+// ─── Column with Divider Mix ───
+## Dividers in Columns ##
+| Item | --- |> Price |
+| Burger |> $8.99 |
+| Fries |> $4.50 |
+| --- | === |
+| *Total* | === |> *$13.49* |
+
+---
+
+// ─── Many Short Columns ───
+## Five Columns ##
+| A | B | C | D | E |
+| 1 | 2 | 3 | 4 | 5 |
+
+---
+
+// ─── Edge Cases ───
+## Edge Cases ##
+
+// Empty-ish columns
+| |> $5.00 |
+| Item |> |
+
+// Single character columns
+| X |> Y |
+
+// Very long single word that can't break on spaces
+| Supercalifragilisticexpialidocious |> $1.00 |
+| Item |> Pneumonoultramicroscopicsilicovolcanoconiosis |
+
+---
+
+// ─── Real-World Receipt Scenario ───
+## Order #1042 ##
+|> Feb 25, 2026  12:34 PM <|
+
+---
+
+| 1x Classic Cheeseburger with Lettuce Tomato and Onion |> $8.99 |
+|   `Add bacon` |> $1.50 |
+|   `Extra cheese` |> $0.75 |
+| 1x Large Hand-Spun Milkshake (Chocolate Peanut Butter) |> $6.99 |
+| 1x Sweet Potato Fries with Chipotle Aioli |> $4.99 |
+| 1x Fresh-Squeezed Lemonade with Mint and Honey |> $3.99 |
+
+...
+
+| Subtotal |> $27.21 |
+| Tax (8.25%) |> $2.24 |
+
+===
+
+++ | *TOTAL* |> *$29.45* | ++
+
+---
+
+| Visa ending in 4821 |> $29.45 |
+
+===
+
+|> Thank you for your order! <|
+|> Please visit us again at burgerbarn.com <|
+
+---
+
+// ─── Percentage Width Columns ───
+## Percentage Widths ##
+
+// 80/20 split
+|80 This takes up eighty percent of the width |20> $5.00
+
+// 60/20/20 three column
+|60 Description |20> Qty |20> Price
+|60 Grilled Chicken Sandwich |20> 2x |20> $25.98
+
+// Partial: one explicit, rest auto
+|80 Eighty percent column | Remaining gets the rest
+
+// No trailing pipe needed
+| Item name |> $5.00
+|80 Description |20> Price
+
+---
+
+// ─── Invalid Percentages (sum > 100 → equal) ───
+## Invalid Percentages ##
+|200 This is way too wide |20> Falls back to equal
+|60 Sixty |60> Plus sixty is over 100
+
+---
+
+// ─── Feed Spacing ───
+## Feed Spacing ##
+Feed spacing tests
+@feed(1)
+^ One line feed
+@feed(.5)
+^ Half line feed
+@feed(1/2)
+^ Another half line
+@feed(2mm)
+^ Two millimeter feed
+@feed(5mm)
+^ Five millimeter feed
+Line after

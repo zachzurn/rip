@@ -1,0 +1,38 @@
+{
+  "name": "rip-receipt",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Rip receipt markup — render receipts to PNG, HTML, text, or ESC/POS from Node.js (native addon)",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "rip_nodejs.node",
+    "README.md"
+  ],
+  "napi": {
+    "binaryName": "rip_nodejs"
+  },
+  "keywords": [
+    "receipt",
+    "thermal-printer",
+    "escpos",
+    "markup",
+    "native"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zachzurn/rip"
+  },
+  "author": "Zach Zurn",
+  "devDependencies": {
+    "@napi-rs/cli": "^3.0.0"
+  },
+  "scripts": {
+    "build": "napi build --release",
+    "build:debug": "napi build",
+    "test": "node test_smoke.mjs"
+  }
+}

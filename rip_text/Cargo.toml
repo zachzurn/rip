@@ -9,4 +9,3 @@ authors = ["Zach Zurn"]
 
 [dependencies]
 rip_parser = { path = "../rip_parser" }
-taffy = "0.9"
