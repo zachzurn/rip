@@ -77,7 +77,14 @@
       "Bash(npx napi create-npm-dirs)",
       "Bash(npx napi build --platform --release)",
       "Bash(rm -f rip_nodejs.node)",
-      "Bash(ls -la rip-nodejs.*.node)"
+      "Bash(ls -la rip-nodejs.*.node)",
+      "Bash(gh run list --limit 5)",
+      "Bash(where gh)",
+      "Read(//c/Program Files/GitHub CLI/**)",
+      "Read(//c/Program Files \\(x86\\)/GitHub CLI/**)",
+      "Bash(cargo tree -p rip_resources --prefix none)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(cargo tree -p rip_resources --prefix none --no-dedupe)"
     ]
   }
 }

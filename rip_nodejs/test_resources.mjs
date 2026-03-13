@@ -1,9 +1,15 @@
 /**
- * Test resource loading — local images and caching.
+ * Test resource loading — local images, caching, and resolveResources.
  */
 
-import { renderImage, renderEscpos } from './index.js';
-import { writeFileSync, readFileSync, rmSync, mkdirSync, readdirSync } from 'node:fs';
+import {
+    parse,
+    resolveResources,
+    renderImage,
+    renderEscpos,
+    renderImageFromMarkup,
+} from './index.js';
+import { readFileSync, rmSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,20 +25,34 @@ let failed = 0;
 
 function assert(condition, message) {
     if (!condition) {
-        console.error(`  \u2717 ${message}`);
+        console.error(`  ✗ ${message}`);
         failed++;
     } else {
-        console.log(`  \u2713 ${message}`);
+        console.log(`  ✓ ${message}`);
         passed++;
     }
 }
 
-// ─── Local image rendering ──────────────────────────────────────────
+// ─── parse + resolveResources (local only) ──────────────────────────
 
-console.log('\nLocal image (burger-barn):');
+console.log('\nresolveResources (local markup):');
 
 const source = readFileSync(join(examplesDir, 'burger-barn.rip'), 'utf-8');
-const png = await renderImage(source, {
+const doc = parse(source);
+
+const needed = resolveResources(doc, {
+    resourceDir: examplesDir,
+    cacheDir: cacheDir,
+});
+assert(Array.isArray(needed), 'returns an array');
+// burger-barn.rip uses local images, not remote URLs
+assert(needed.length === 0, `no remote URLs needed (got ${needed.length})`);
+
+// ─── Local image rendering (Document API) ───────────────────────────
+
+console.log('\nLocal image (burger-barn, Document API):');
+
+const png = await renderImage(doc, {
     resourceDir: examplesDir,
     cacheDir: cacheDir,
 });
@@ -54,7 +74,7 @@ console.log(`  cached files: ${cacheFiles.join(', ')}`);
 console.log('\nCached render:');
 
 const start = performance.now();
-const png2 = await renderImage(source, {
+const png2 = await renderImage(doc, {
     resourceDir: examplesDir,
     cacheDir: cacheDir,
 });
@@ -65,14 +85,25 @@ console.log(`  cached render time: ${elapsed.toFixed(1)}ms`);
 
 // ─── ESC/POS with resources ─────────────────────────────────────────
 
-console.log('\nESC/POS with resources:');
+console.log('\nESC/POS with resources (Document API):');
 
-const escpos = await renderEscpos(source, {
+const escpos = await renderEscpos(doc, {
     resourceDir: examplesDir,
 });
 assert(escpos instanceof Buffer, 'returns a Buffer');
 assert(escpos.length > 100, `non-trivial ESC/POS output (${escpos.length} bytes)`);
 assert(escpos[0] === 0x1B && escpos[1] === 0x40, 'starts with ESC @ (init)');
+
+// ─── FromMarkup convenience (backwards compat) ─────────────────────
+
+console.log('\nrenderImageFromMarkup (convenience):');
+
+const png3 = await renderImageFromMarkup(source, {
+    resourceDir: examplesDir,
+    cacheDir: cacheDir,
+});
+assert(png3 instanceof Buffer, 'returns a Buffer');
+assert(png3.length === png.length, `same output as Document API (${png3.length} === ${png.length})`);
 
 // ─── Cleanup ────────────────────────────────────────────────────────
 

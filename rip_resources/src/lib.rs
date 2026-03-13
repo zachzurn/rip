@@ -1,8 +1,11 @@
 //! Resource processing for Rip markup.
 //!
-//! Handles resource fetching (local files + HTTPS), caching, image
-//! decoding, scaling, and dithering. Callers provide a [`ResourceConfig`]
-//! with optional directory paths — all I/O is handled internally.
+//! Handles local file loading, caching, image decoding, scaling, and
+//! dithering. For remote URLs (HTTPS), the host provides raw bytes via
+//! [`ResourceConfig::resources`] — this crate does no network I/O.
+//!
+//! Use [`resolve_resources`] to discover which remote URLs need fetching,
+//! then pass the bytes in via `config.resources` before rendering.
 //!
 //! Used by renderers that deal with pixel data (`rip_image`, `rip_escpos`).
 
@@ -10,7 +13,6 @@ pub mod dither;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use rip_parser::ast::Node;
@@ -23,15 +25,20 @@ use sha2::{Digest, Sha256};
 ///
 /// Provide a `resource_dir` to resolve relative file paths (fonts, images).
 /// Provide a `cache_dir` to cache downloaded and processed resources.
-/// Both are optional — even with no paths, HTTPS URLs can still be fetched.
+/// Provide `resources` with pre-fetched bytes for remote URLs.
 #[derive(Debug, Clone, Default)]
 pub struct ResourceConfig {
     /// Base directory for resolving relative resource paths (fonts, images).
-    /// If `None`, only absolute paths and HTTPS URLs work.
+    /// If `None`, only absolute paths work for local files.
     pub resource_dir: Option<PathBuf>,
     /// Directory for caching downloaded and processed resources.
-    /// If `None`, no caching (re-fetches and re-processes every time).
+    /// If `None`, no caching (re-processes every time).
     pub cache_dir: Option<PathBuf>,
+    /// Pre-fetched remote resource bytes, keyed by URL.
+    ///
+    /// Use [`resolve_resources`] to discover which URLs need fetching,
+    /// then populate this map before calling render functions.
+    pub resources: HashMap<String, Vec<u8>>,
 }
 
 // ─── Resource types ─────────────────────────────────────────────────────────
@@ -282,8 +289,6 @@ fn image_cache_key(
 
 // ─── Resource fetching ──────────────────────────────────────────────────────
 
-const MAX_DOWNLOAD_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
-
 fn is_url(s: &str) -> bool {
     s.starts_with("http://") || s.starts_with("https://")
 }
@@ -330,61 +335,83 @@ fn load_local(resource_dir: &Path, url: &str) -> Option<Vec<u8>> {
     }
 }
 
-/// Download a remote URL, using download cache if available.
-fn load_remote(cache_dir: Option<&Path>, url: &str) -> Option<Vec<u8>> {
+/// Load bytes for a remote URL from pre-fetched resources or download cache.
+///
+/// The host provides bytes via `config.resources`. If a download cache is
+/// configured and the URL is found there, that's used instead. Newly provided
+/// bytes are written to the download cache for future runs.
+fn load_remote(config: &ResourceConfig, url: &str) -> Option<Vec<u8>> {
     // Check download cache first
-    if let Some(dir) = cache_dir {
+    if let Some(dir) = &config.cache_dir {
         let cached_path = dir.join(download_cache_key(url));
         if let Ok(bytes) = fs::read(&cached_path) {
             return Some(bytes);
         }
     }
 
-    eprintln!("downloading {url}...");
-    let response = match ureq::get(url).call() {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("warning: download failed for {url}: {e}");
-            return None;
-        }
-    };
+    // Look up in host-provided resources
+    let bytes = config.resources.get(url)?;
 
-    let mut bytes = Vec::new();
-    match response
-        .into_body()
-        .with_config()
-        .limit(MAX_DOWNLOAD_BYTES)
-        .reader()
-        .read_to_end(&mut bytes)
-    {
-        Ok(_) => {}
-        Err(e) => {
-            eprintln!("warning: failed reading response for {url}: {e}");
-            return None;
-        }
-    }
-
-    // Write to download cache
-    if let Some(dir) = cache_dir {
+    // Write to download cache for future runs
+    if let Some(dir) = &config.cache_dir {
         let _ = fs::create_dir_all(dir);
         let cached_path = dir.join(download_cache_key(url));
-        if let Err(e) = fs::write(&cached_path, &bytes) {
+        if let Err(e) = fs::write(&cached_path, bytes) {
             eprintln!("warning: cannot write download cache for {url}: {e}");
         }
     }
 
-    Some(bytes)
+    Some(bytes.clone())
 }
 
 /// Load raw bytes for a resource (local or remote).
 fn load_raw(config: &ResourceConfig, url: &str) -> Option<Vec<u8>> {
     if is_url(url) {
-        load_remote(config.cache_dir.as_deref(), url)
+        load_remote(config, url)
     } else if let Some(dir) = &config.resource_dir {
         load_local(dir, url)
     } else {
         None
     }
+}
+
+/// Discover which remote URLs need to be fetched by the host.
+///
+/// Walks the AST, finds all resource references (images and fonts),
+/// and returns only the HTTPS URLs that are not already in the download
+/// cache. The host should fetch these and put the bytes in
+/// [`ResourceConfig::resources`] before rendering.
+///
+/// Returns an empty `Vec` if all resources are local or cached.
+pub fn resolve_resources(nodes: &[Node], config: &ResourceConfig) -> Vec<String> {
+    let resource_urls = rip_parser::collect_resources(nodes);
+    let mut needed = Vec::new();
+    let mut seen = HashSet::new();
+
+    let all_urls = resource_urls.images.iter().chain(resource_urls.fonts.iter());
+
+    for url in all_urls {
+        if !is_url(url) || !seen.insert(url.clone()) {
+            continue;
+        }
+
+        // Already provided by host?
+        if config.resources.contains_key(url.as_str()) {
+            continue;
+        }
+
+        // Already in download cache?
+        if let Some(dir) = &config.cache_dir {
+            let cached_path = dir.join(download_cache_key(url));
+            if cached_path.exists() {
+                continue;
+            }
+        }
+
+        needed.push(url.clone());
+    }
+
+    needed
 }
 
 /// Read processed cache if it exists.

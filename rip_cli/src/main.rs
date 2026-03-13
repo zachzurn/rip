@@ -1,4 +1,5 @@
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -203,6 +204,33 @@ fn make_config(args: &Args) -> rip::ResourceConfig {
     rip::ResourceConfig {
         resource_dir: Some(args.base_dir.clone()),
         cache_dir: args.cache_dir.clone(),
+        resources: HashMap::new(),
+    }
+}
+
+/// Fetch any remote resources needed for rendering.
+///
+/// Calls `resolve_resources` to find URLs not in cache, fetches each with
+/// ureq, and populates `config.resources`. Warnings are printed for failures
+/// but do not stop rendering — the image will just be missing.
+fn fetch_remote_resources(nodes: &[rip::Node], config: &mut rip::ResourceConfig) {
+    let needed = rip::resolve_resources(nodes, config);
+    for url in &needed {
+        match ureq::get(url).call() {
+            Ok(response) => {
+                match response.into_body().read_to_vec() {
+                    Ok(bytes) => {
+                        config.resources.insert(url.clone(), bytes);
+                    }
+                    Err(e) => {
+                        eprintln!("warning: failed to read {url}: {e}");
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("warning: failed to fetch {url}: {e}");
+            }
+        }
     }
 }
 
@@ -249,9 +277,10 @@ fn run_bench(args: &Args) {
     let iterations = 100;
 
     let nodes = parse_rip(args);
-    let config = make_config(args);
+    let mut config = make_config(args);
+    fetch_remote_resources(&nodes, &mut config);
 
-    // Warmup: render once so downloads, cache, and OS page faults
+    // Warmup: render once so cache and OS page faults
     // are all settled before we start timing.
     let _ = rip::render_image(&nodes, &config);
 
@@ -287,17 +316,15 @@ fn run_bench(args: &Args) {
 // Render to file
 // ---------------------------------------------------------------------------
 
-fn render_to_file(nodes: &[rip::Node], args: &Args, out_path: &str) {
+fn render_to_file(nodes: &[rip::Node], config: &rip::ResourceConfig, out_path: &str) {
     let ext = Path::new(out_path)
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("");
 
-    let config = make_config(args);
-
     match ext {
         "png" => {
-            let png_bytes = rip::render_image(nodes, &config).unwrap_or_else(|e| {
+            let png_bytes = rip::render_image(nodes, config).unwrap_or_else(|e| {
                 eprintln!("error: render failed: {e}");
                 process::exit(1);
             });
@@ -308,7 +335,7 @@ fn render_to_file(nodes: &[rip::Node], args: &Args, out_path: &str) {
             eprintln!("wrote {out_path} ({} bytes)", png_bytes.len());
         }
         "raster" => {
-            let raster_bytes = rip::render_raster(nodes, &config).unwrap_or_else(|e| {
+            let raster_bytes = rip::render_raster(nodes, config).unwrap_or_else(|e| {
                 eprintln!("error: render failed: {e}");
                 process::exit(1);
             });
@@ -319,7 +346,7 @@ fn render_to_file(nodes: &[rip::Node], args: &Args, out_path: &str) {
             eprintln!("wrote {out_path} ({} bytes)", raster_bytes.len());
         }
         "bin" => {
-            let bytes = rip::render_escpos(nodes, &config);
+            let bytes = rip::render_escpos(nodes, config);
             fs::write(out_path, &bytes).unwrap_or_else(|e| {
                 eprintln!("error: cannot write ESC/POS: {e}");
                 process::exit(1);
@@ -424,11 +451,14 @@ fn main() {
         Output::Bench => run_bench(&args),
         Output::File(out_path) => {
             let nodes = parse_rip(&args);
-            render_to_file(&nodes, &args, out_path);
+            let mut config = make_config(&args);
+            fetch_remote_resources(&nodes, &mut config);
+            render_to_file(&nodes, &config, out_path);
         }
         Output::Print(port, mode) => {
             let nodes = parse_rip(&args);
-            let config = make_config(&args);
+            let mut config = make_config(&args);
+            fetch_remote_resources(&nodes, &mut config);
             print_to_port(&nodes, &config, port, mode);
         }
     }

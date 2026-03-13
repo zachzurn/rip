@@ -1,6 +1,6 @@
 {
   "name": "rip-receipt",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "Rip receipt markup — render receipts to PNG, HTML, text, or ESC/POS from Node.js (native addon)",
   "main": "index.js",
   "types": "index.d.ts",

@@ -4,47 +4,91 @@
  * Run: node rip_nodejs/test_smoke.mjs
  */
 
-import { renderHtml, renderText, renderImage, renderRaster, renderEscpos } from './index.js';
+import {
+    parse,
+    resolveResources,
+    renderHtml,
+    renderText,
+    renderImage,
+    renderRaster,
+    renderEscpos,
+    renderHtmlFromMarkup,
+    renderTextFromMarkup,
+    renderImageFromMarkup,
+    renderRasterFromMarkup,
+    renderEscposFromMarkup,
+} from './index.js';
 
 let passed = 0;
 let failed = 0;
 
 function assert(condition, message) {
     if (!condition) {
-        console.error(`  \u2717 ${message}`);
+        console.error(`  ✗ ${message}`);
         failed++;
     } else {
-        console.log(`  \u2713 ${message}`);
+        console.log(`  ✓ ${message}`);
         passed++;
     }
 }
 
-// ─── renderHtml ─────────────────────────────────────────────────────
+// ─── parse + Document ──────────────────────────────────────────────
 
-console.log('\nrenderHtml:');
+console.log('\nparse:');
 
-const html = await renderHtml('## Hello World\n---\n| Coffee | $4.50 |');
+const doc = parse('## Hello World\n---\n| Coffee | $4.50 |');
+assert(doc != null, 'returns a Document object');
+
+// ─── resolveResources ──────────────────────────────────────────────
+
+console.log('\nresolveResources:');
+
+const needed = resolveResources(doc);
+assert(Array.isArray(needed), 'returns an array');
+assert(needed.length === 0, 'no remote resources needed for local-only markup');
+
+// ─── renderHtml (Document) ─────────────────────────────────────────
+
+console.log('\nrenderHtml (Document):');
+
+const html = await renderHtml(doc);
 assert(typeof html === 'string', 'returns a string');
 assert(html.includes('Hello World'), 'contains title text');
 assert(html.includes('Coffee'), 'contains column text');
 assert(html.includes('$4.50'), 'contains price');
 assert(html.includes('<html'), 'is a full HTML document');
 
-// ─── renderText ─────────────────────────────────────────────────────
+// ─── renderHtmlFromMarkup (convenience) ────────────────────────────
 
-console.log('\nrenderText:');
+console.log('\nrenderHtmlFromMarkup:');
 
-const text = await renderText('## Hello World\n---\n| Coffee | $4.50 |');
+const html2 = await renderHtmlFromMarkup('## Hello World\n---\n| Coffee | $4.50 |');
+assert(typeof html2 === 'string', 'returns a string');
+assert(html2.includes('Hello World'), 'contains title text');
+
+// ─── renderText (Document) ─────────────────────────────────────────
+
+console.log('\nrenderText (Document):');
+
+const text = await renderText(doc);
 assert(typeof text === 'string', 'returns a string');
 assert(text.includes('Hello World'), 'contains title text');
 assert(text.includes('Coffee'), 'contains column text');
 assert(text.includes('$4.50'), 'contains price');
 
-// ─── renderImage ────────────────────────────────────────────────────
+// ─── renderTextFromMarkup (convenience) ────────────────────────────
 
-console.log('\nrenderImage:');
+console.log('\nrenderTextFromMarkup:');
 
-const png = await renderImage('Hello');
+const text2 = await renderTextFromMarkup('## Hello\nWorld');
+assert(typeof text2 === 'string', 'returns a string');
+assert(text2.includes('Hello'), 'contains text');
+
+// ─── renderImage (Document) ────────────────────────────────────────
+
+console.log('\nrenderImage (Document):');
+
+const png = await renderImage(doc);
 assert(png instanceof Buffer, 'returns a Buffer');
 assert(png.length > 0, 'non-empty output');
 // PNG signature: 137 80 78 71 13 10 26 10
@@ -53,31 +97,55 @@ assert(
     'starts with PNG signature'
 );
 
-// ─── renderRaster ───────────────────────────────────────────────────
+// ─── renderImageFromMarkup (convenience) ───────────────────────────
 
-console.log('\nrenderRaster:');
+console.log('\nrenderImageFromMarkup:');
 
-const raster = await renderRaster('Hello');
+const png2 = await renderImageFromMarkup('Hello');
+assert(png2 instanceof Buffer, 'returns a Buffer');
+assert(png2[0] === 0x89 && png2[1] === 0x50, 'valid PNG signature');
+
+// ─── renderRaster (Document) ───────────────────────────────────────
+
+console.log('\nrenderRaster (Document):');
+
+const raster = await renderRaster(doc);
 assert(raster instanceof Buffer, 'returns a Buffer');
 assert(raster.length > 0, 'non-empty output');
 // ESC/POS raster starts with ESC @ (init)
 assert(raster[0] === 0x1B && raster[1] === 0x40, 'starts with ESC @ (init)');
 
-// ─── renderEscpos ───────────────────────────────────────────────────
+// ─── renderRasterFromMarkup (convenience) ──────────────────────────
 
-console.log('\nrenderEscpos:');
+console.log('\nrenderRasterFromMarkup:');
 
-const escpos = await renderEscpos('Hello\n@cut()');
+const raster2 = await renderRasterFromMarkup('Hello');
+assert(raster2 instanceof Buffer, 'returns a Buffer');
+assert(raster2[0] === 0x1B && raster2[1] === 0x40, 'starts with ESC @ (init)');
+
+// ─── renderEscpos (Document) ───────────────────────────────────────
+
+console.log('\nrenderEscpos (Document):');
+
+const escpos = await renderEscpos(doc);
 assert(escpos instanceof Buffer, 'returns a Buffer');
 assert(escpos.length > 0, 'non-empty output');
 assert(escpos[0] === 0x1B && escpos[1] === 0x40, 'starts with ESC @ (init)');
+
+// ─── renderEscposFromMarkup (convenience) ──────────────────────────
+
+console.log('\nrenderEscposFromMarkup:');
+
+const escpos2 = await renderEscposFromMarkup('Hello\n@cut()');
+assert(escpos2 instanceof Buffer, 'returns a Buffer');
+assert(escpos2[0] === 0x1B && escpos2[1] === 0x40, 'starts with ESC @ (init)');
 
 // ─── Timing ─────────────────────────────────────────────────────────
 
 console.log('\nPerformance:');
 
 const start = performance.now();
-await renderHtml('## Hello\n---\nItem | $5.00');
+await renderHtml(parse('## Hello\n---\nItem | $5.00'));
 const elapsed = performance.now() - start;
 assert(elapsed < 50, `renderHtml is fast (${elapsed.toFixed(1)}ms < 50ms)`);
 

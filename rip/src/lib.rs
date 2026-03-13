@@ -2,8 +2,10 @@
 //!
 //! Parse `.rip` markup and render to PNG, ESC/POS raster, ESC/POS text,
 //! HTML, or plain text. Each render function takes a [`ResourceConfig`]
-//! for resource-needing formats (image, raster, ESC/POS) — the library
-//! handles all fetching, caching, and processing internally.
+//! for resource-needing formats (image, raster, ESC/POS).
+//!
+//! For remote URLs, use [`resolve_resources`] to discover what the host
+//! needs to fetch, then pass bytes via [`ResourceConfig::resources`].
 //!
 //! # Example
 //!
@@ -12,6 +14,7 @@
 //! let config = rip::ResourceConfig {
 //!     resource_dir: Some("./assets".into()),
 //!     cache_dir: Some("./cache".into()),
+//!     ..Default::default()
 //! };
 //! let png_bytes = rip::render_image(&nodes, &config).unwrap();
 //! ```
@@ -23,8 +26,9 @@ pub use rip_parser::{
 };
 pub use rip_parser::ast::Node;
 
-// Re-export resource config
+// Re-export resource config and resolve
 pub use rip_resources::ResourceConfig;
+pub use rip_resources::resolve_resources;
 
 pub use rip_image::RenderError;
 
