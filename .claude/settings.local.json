@@ -84,7 +84,8 @@
       "Read(//c/Program Files \\(x86\\)/GitHub CLI/**)",
       "Bash(cargo tree -p rip_resources --prefix none)",
       "WebFetch(domain:api.github.com)",
-      "Bash(cargo tree -p rip_resources --prefix none --no-dedupe)"
+      "Bash(cargo tree -p rip_resources --prefix none --no-dedupe)",
+      "Bash(gh run list --limit 5 --repo zachzurn/rip)"
     ]
   }
 }
