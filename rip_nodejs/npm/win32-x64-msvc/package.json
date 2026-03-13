@@ -1,0 +1,28 @@
+{
+  "name": "rip-receipt-win32-x64-msvc",
+  "version": "0.1.0",
+  "cpu": [
+    "x64"
+  ],
+  "main": "rip-nodejs.win32-x64-msvc.node",
+  "files": [
+    "rip-nodejs.win32-x64-msvc.node"
+  ],
+  "description": "Rip receipt markup — render receipts to PNG, HTML, text, or ESC/POS from Node.js (native addon)",
+  "keywords": [
+    "receipt",
+    "thermal-printer",
+    "escpos",
+    "markup",
+    "native"
+  ],
+  "author": "Zach Zurn",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zachzurn/rip"
+  },
+  "os": [
+    "win32"
+  ]
+}

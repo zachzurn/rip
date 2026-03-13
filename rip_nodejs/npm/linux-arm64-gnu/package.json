@@ -1,0 +1,31 @@
+{
+  "name": "rip-receipt-linux-arm64-gnu",
+  "version": "0.1.0",
+  "cpu": [
+    "arm64"
+  ],
+  "main": "rip-nodejs.linux-arm64-gnu.node",
+  "files": [
+    "rip-nodejs.linux-arm64-gnu.node"
+  ],
+  "description": "Rip receipt markup — render receipts to PNG, HTML, text, or ESC/POS from Node.js (native addon)",
+  "keywords": [
+    "receipt",
+    "thermal-printer",
+    "escpos",
+    "markup",
+    "native"
+  ],
+  "author": "Zach Zurn",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zachzurn/rip"
+  },
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "glibc"
+  ]
+}

@@ -1,18 +1,19 @@
 {
   "name": "rip-receipt",
   "version": "0.1.0",
-  "type": "module",
   "description": "Rip receipt markup — render receipts to PNG, HTML, text, or ESC/POS from Node.js (native addon)",
   "main": "index.js",
   "types": "index.d.ts",
-  "files": [
-    "index.js",
-    "index.d.ts",
-    "rip_nodejs.node",
-    "README.md"
-  ],
   "napi": {
-    "binaryName": "rip_nodejs"
+    "binaryName": "rip-nodejs",
+    "targets": [
+      "x86_64-pc-windows-msvc",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl"
+    ]
   },
   "keywords": [
     "receipt",
@@ -31,8 +32,11 @@
     "@napi-rs/cli": "^3.0.0"
   },
   "scripts": {
-    "build": "napi build --release",
-    "build:debug": "napi build",
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "artifacts": "napi artifacts",
+    "prepublishOnly": "napi prepublish -t npm",
+    "version": "napi version",
     "test": "node test_smoke.mjs"
   }
 }

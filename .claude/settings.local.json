@@ -72,7 +72,12 @@
       "Bash(npx napi build --help)",
       "Bash(node test_smoke.mjs)",
       "Bash(node test_resources.mjs)",
-      "Bash(cargo test --workspace --exclude rip_android)"
+      "Bash(cargo test --workspace --exclude rip_android)",
+      "WebFetch(domain:github.com)",
+      "Bash(npx napi create-npm-dirs)",
+      "Bash(npx napi build --platform --release)",
+      "Bash(rm -f rip_nodejs.node)",
+      "Bash(ls -la rip-nodejs.*.node)"
     ]
   }
 }
